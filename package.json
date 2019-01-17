@@ -1,0 +1,14 @@
+{
+  "name": "wine-cellar-back-end",
+  "version": "1.0.0",
+  "description": "wine cellar back end",
+  "main": "index.js",
+  "scripts": {
+    "test": "nodemon"
+  },
+  "author": "R Hough",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.16.4"
+  }
+}
