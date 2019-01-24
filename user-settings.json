@@ -1,0 +1,28 @@
+{
+    "alarms": [
+        {
+            "name": "Alarm 1",
+            "condition": "",
+            "isSubscribedTo": false,
+            "alertFrequency": "as needed"
+        },
+        {
+            "name": "Alarm 2",
+            "condition": "",
+            "isSubscribedTo": true,
+            "alertFrequency": "every X days"
+        }
+    ],
+    "dataCollectionParams": {
+        "collectTemperature": true,
+        "collectHumidity": true,
+        "temperatureFrequency": "X days",
+        "humidityFrequency": "X days"
+    },
+    "reportParams": {
+        "showTemperature": true,
+        "showHumidity": true,
+        "reportGenerationFrequency": "X days"
+    },
+    "userEmailAddress": ""
+}

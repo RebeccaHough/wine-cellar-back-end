@@ -1,8 +1,16 @@
 var express = require('express');
 var fs = require('fs');
 var app = express();
+var nodemailer = require('nodemailer');
 
-const filepath = './database.csv';
+const dbfilepath = './database.csv';
+const settingsfilepath = './settings.json'; //TODO
+
+//for email alerter/nodemailer
+var transporter;
+const serverEmailAddress = 'youremail@gmail.com';
+const serverEmailPassword = 'yourpassword';
+const serverEmailService = 'gmail';
 
 // what is this for
 // app.configure(function(){
@@ -11,7 +19,7 @@ const filepath = './database.csv';
 //     app.use(express.bodyParser());
 // });
 
-/*** Pi endpoints ***/
+//#region /*** Pi endpoints ***/
 
 /**
  * Add entries to Db
@@ -33,12 +41,14 @@ app.post('/add', function(req, res) {
         //TODO maybe overkill to do this in a for loop
         for(line in body) {
             //save to database.csv
-            appendToDatabase(filepath, body);
+            appendToDatabase(dbfilepath, body);
         }
     }
 });
 
-/*** Client endpoints ***/
+//#endregion
+
+//#region /*** Client endpoints ***/
 
 /** 
  * Send Db
@@ -66,7 +76,9 @@ app.post('/time', function(req, res) {
     res.send("Hello time!");
 });
 
-/*** Functions ***/
+//#endregion
+
+//#region /*** File functions ***/
 
 /** 
  * Append data specified by input args to database file contents
@@ -88,6 +100,79 @@ function readDatabase(filepath) {
     fs.readFile('filepath')
     return "";
 }
+
+/**
+ * TODO Handle user settings
+ */
+function handleUserSettings() {
+    return;
+}
+
+//#endregion
+
+//#region /*** Data analysis functions ***/
+
+//TODO
+
+//#endregion
+
+//#region /*** Email alterter functions ***/
+
+/**
+ * Send an email alert
+ * TODO https://www.codementor.io/joshuaaroke/sending-html-message-in-nodejs-express-9i3d3uhjr
+ */
+function sendEmail() {
+    //TODO load html body for this alarm
+    var html = '<h1>Hello</h1>';
+
+    //TODO load user's email address from settings, or request it
+    var userEmailAddress = 'youremail@gmail.com';
+
+    //initialise email options
+    //TODO setup email account for server
+    var mailOptions = {
+        from: serverEmailAddress,
+        to: userEmailAddress,
+        subject: 'Sending Email using Node.js',
+        html: html
+      };
+
+    //ensure nodemailer's transporter is available
+    if(!transporter) createTransporter();
+
+    //send email
+    transporter.sendMail(mailOptions, function(error, info){
+        if (error) {
+          console.log(error);
+          //TODO inform user
+        } else {
+          console.log('Email sent: ' + info.response);
+          //TODO inform user
+        }
+      });
+}
+
+/**
+ * Create nodemailer transporter
+ */
+function createTransporter() {
+    transporter = nodemailer.createTransport({
+        service: serverEmailService,
+        auth: {
+          user: serverEmailAddress,
+          pass: serverEmailPassword
+        }
+    });
+}
+
+//#endregion
+
+//#region /*** Report generator functions ***/
+
+//TODO
+
+//#endregion
 
 app.listen(1337);
 
