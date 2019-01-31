@@ -12,19 +12,28 @@ const serverEmailAddress = 'youremail@gmail.com';
 const serverEmailPassword = 'yourpassword';
 const serverEmailService = 'gmail';
 
-// what is this for
+// TODO what is this for
 // app.configure(function(){
 //     app.use('/public', express.static(__dirname + '/public'));  
 //     app.use(express.static(__dirname + '/public')); 
 //     app.use(express.bodyParser());
 // });
 
-//#region /*** Pi endpoints ***/
+//#region *** Pi endpoints ***
+
+/** 
+ * Send Pi settings data
+ */ 
+app.get('/get-settings-data', function(req, res) {
+    console.log('Received GET request on endpoint \'/get-settings-data\'.');
+    res.send("Hello get!");
+ });
 
 /**
- * Add entries to Db
+ * Add data from Pi to Db
  */ 
-app.post('/add', function(req, res) {
+app.post('/add-data', function(req, res) {
+    console.log('Received POST request on endpoint \'/add-data\'.');
     //extract body
     body = req.body;
     //test req.body is in csv format
@@ -48,19 +57,21 @@ app.post('/add', function(req, res) {
 
 //#endregion
 
-//#region /*** Client endpoints ***/
+//#region *** Client endpoints ***
 
 /** 
  * Send Db
  */ 
 app.get('/', function(req, res) {
-   res.send("Hello get!");
+    console.log('Received GET request on endpoint \'/\'.');
+    res.send("Hello get!");
 });
 
 /** 
  * Set settings
  */ 
 app.post('/user', function(req, res) {
+    console.log('Received POST request on endpoint \'/user\'.');
     if(body = JSON.parse(req.body)) {
 
     } else {
@@ -73,12 +84,13 @@ app.post('/user', function(req, res) {
  * Set time intervals 
  */
 app.post('/time', function(req, res) {
+    console.log('Received POST request on endpoint \'/time\'.');
     res.send("Hello time!");
 });
 
 //#endregion
 
-//#region /*** File functions ***/
+//#region *** File functions ***
 
 /** 
  * Append data specified by input args to database file contents
@@ -110,13 +122,13 @@ function handleUserSettings() {
 
 //#endregion
 
-//#region /*** Data analysis functions ***/
+//#region *** Data analysis functions ***
 
 //TODO
 
 //#endregion
 
-//#region /*** Email alterter functions ***/
+//#region *** Email alterter functions ***
 
 /**
  * Send an email alert
@@ -168,18 +180,10 @@ function createTransporter() {
 
 //#endregion
 
-//#region /*** Report generator functions ***/
+//#region *** Report generator functions ***
 
 //TODO
 
 //#endregion
 
 app.listen(1337);
-
-// http.createServer(function (req, res) {
-//     fs.readFile('demofile1.html', function(err, data) {
-//       res.writeHead(200, {'Content-Type': 'text/html'});
-//       res.write(data);
-//       res.end();
-//     });
-// }).listen(8080);
