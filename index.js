@@ -3,8 +3,8 @@ var fs = require('fs');
 var app = express();
 var nodemailer = require('nodemailer');
 
-const dbfilepath = './database.csv';
-const settingsfilepath = './user-settings.json';
+const dbfilepath = './savedata/database.csv';
+const settingsfilepath = './savedata/user-settings.json';
 
 //for email alerter/nodemailer
 var transporter;
