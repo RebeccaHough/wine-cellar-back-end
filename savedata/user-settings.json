@@ -16,8 +16,7 @@
     "dataCollectionParams": {
         "collectTemperature": true,
         "collectHumidity": true,
-        "temperatureFrequency": "X days",
-        "humidityFrequency": "X days"
+        "collectionFrequency": 30
     },
     "reportParams": {
         "showTemperature": true,

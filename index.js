@@ -29,7 +29,17 @@ const serverEmailService = 'gmail';
  */ 
 app.get('/get-settings-data', function(req, res) {
     console.log('Received GET request on endpoint \'/get-settings-data\'.');
-    res.send("Hello get!");
+    //read file then attempt to send relevant contents to Pi
+    readFile(settingsfilepath)
+    .then((data) => {
+        console.log("Sending settings to Pi.");
+        res.send(JSON.stringify(data.dataCollectionParams));
+    }).catch((err) => {
+        console.error(err);
+        res.send(JSON.stringify({
+            error: "Failed to read user-settings file."
+        }));
+    })
  });
 
 /**
