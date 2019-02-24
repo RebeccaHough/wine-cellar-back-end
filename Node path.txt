@@ -1,7 +1,0 @@
-Node path:
-..\..\..\Node.js\node.exe index.js
-
-Npm path:
-..\..\..\Node.js\npm.cmd [args]
-
-Use the `--scripts-prepend-node-path` option to include the path for the node binary npm was executed with.

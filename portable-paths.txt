@@ -1,0 +1,13 @@
+Node path:
+..\..\..\Node.js\node.exe index.js
+
+Npm path:
+..\..\..\Node.js\npm.cmd [args]
+
+Use the `--scripts-prepend-node-path` option to include the path for the node binary npm was executed with.
+
+To get the installed versions of all top-level packages (i.e. without their dependencies):
+..\..\..\Node.js\npm.cmd list --depth=0
+
+TODO not yet working. Angular path:
+..\..\..\Node.js\npm.cmd run ng -- serve --[flags]
