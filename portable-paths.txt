@@ -11,3 +11,6 @@ To get the installed versions of all top-level packages (i.e. without their depe
 
 TODO not yet working. Angular path:
 ..\..\..\Node.js\npm.cmd run ng -- serve --[flags]
+
+Git path:
+E:\Git\cmd\git.exe
