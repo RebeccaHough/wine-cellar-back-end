@@ -4,13 +4,13 @@
             "name": "Alarm 1",
             "condition": "",
             "isSubscribedTo": false,
-            "alertFrequency": "as needed"
+            "checkFrequency": "as needed"
         },
         {
             "name": "Alarm 2",
             "condition": "",
             "isSubscribedTo": true,
-            "alertFrequency": "every X days"
+            "checkFrequency": "every X days"
         }
     ],
     "dataCollectionParams": {

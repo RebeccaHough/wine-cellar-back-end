@@ -4,6 +4,7 @@ var app = express();
 var fs = require('fs');
 var nodemailer = require('nodemailer');
 var schedule = require('node-schedule');
+var bodyParser = require('body-parser');
 
 //file paths
 const dbFilepath = './savedata/database.csv';
@@ -15,8 +16,12 @@ const serverEmailAddress = 'wine.cellar.backend@gmail.com';
 const serverEmailPassword = 'W1n3-C3114r';
 const serverEmailService = 'gmail';
 
-//settings loaded from user-settings.json
+//variables loaded from user-settings.json
 let settings;
+/** Array to hold all scheduled jobs for alarm checking */
+let alarms;
+
+app.use(bodyParser.json());
 
 //#region *** Pi endpoints ***
 
@@ -31,13 +36,17 @@ app.get('/get-settings-data', function(req, res) {
         res.send(JSON.stringify(data.dataCollectionParams));
     } else {
         //else read file then attempt to send relevant contents to Pi
-        //(this should, in theory, never happen)
+        //(This should, in theory, rarely happen. One possible occurance would be if the app receives a
+        //request before the main has finished loading user-settings into memory. In which case,
+        //the action of reading the file again may be redundant, but is more proactive and easier than 
+        //waiting an unknown amount of time for main to load in said settings.)
         readFile(settingsFilepath)
         .then((data) => {
             console.log("Sending settings to Pi.");
             res.send(JSON.stringify(data.dataCollectionParams));
         }).catch((err) => {
             console.error(err);
+            //TODO error message format
             res.send(JSON.stringify({
                 error: "Failed to read user-settings file."
             }));
@@ -47,11 +56,11 @@ app.get('/get-settings-data', function(req, res) {
 
 /**
  * Append data receieved from Pi to the database (the file pointed to by dbFilepath)
- */ 
+ */
 app.post('/add-data', function(req, res) {
     console.log('Received POST request on endpoint \'/add-data\'.');
     //extract body
-    body = req.body;
+    let body = req.body;
     //if req.body is in expected format
     if(validatePiData(body)) {
         //save new data to database
@@ -214,19 +223,17 @@ function appendToFile(filepath, content) {
 /**
  * Check the data receievd from the Pi is well-formed and valid.
  * 
- * The data is well-formed if it contains single- or multi-line string of exactly 3 numbers per line,
- * each separated by a comma.
+ * The data is well-formed if it is an array of arrays that contain exactly 3 'number' objects.
  * 
- * TODO test
+ * TODO need to handle malformed data better
  * 
- * @param {string} data single- or multi-line string of data to be checked against the above conditions
+ * @param {any} data a javascript object to be checked against the above conditions
  * @return {boolean} a boolean indicating the data's validity
  */
 function validatePiData(data) {
-    data = data.split('/n');
-    for(line in data) {
+    for(let array in data) {
         if(
-            (items = body.split(','))
+            (items = array.split(','))
             && items.length == 3
             && items[0].instanceof(number) //unix timestamp
             && items[1].instanceof(number) //temperature
@@ -246,7 +253,7 @@ function validatePiData(data) {
  */
 function loadUserSettings(setting) {
     return new Promise(function(resolve, reject) {
-        readFile('./user-settings.json')
+        readFile(settingsFilepath)
         .then(data => {
             //load file content into javascript object
             userSettings = JSON.parse(data);
@@ -272,18 +279,30 @@ function loadUserSettings(setting) {
  * Perform initial start-up operations, such as loading settings into memory and
  * scheduling periodic operations, such as report generation
  */
-(function main() {
+(function setup() {
+    console.log("Starting wine cellar back end.")
     //load various settings into memory
-    loadUserSettings.then(loadSettings => {
+    loadUserSettings()
+    .then(loadSettings => {
         settings = loadSettings;
-
+        alarms = [];
+        
+        //for each alarm, schedule a job based on check frequency
         for(alarm in settings.alarms) {
-            let alarm = schedule.scheduleJob('42 * * * *', function() {
-                sendEmail();
-            });
+            if(!alarm in alarms) createAlarm(alarm);
         }
-        settings.reportParams.reportGenerationFrequency
-    })
+
+        //schedule a job for report generation
+        //when = toTime(settings.reportParams.reportGenerationFrequency)
+        let report = schedule.scheduleJob('42 * * * *', function() {
+            subject = "Monthly wine cellar report"
+            //generate necessary report details
+            content = generateReportData();
+            sendEmail(subject, 'html/report.html', content);
+        });
+    }).catch(err => {
+        console.log(err); //TODO
+    });
 })();
 
 /**
@@ -292,7 +311,7 @@ function loadUserSettings(setting) {
  * @param time time in ??
  * @returns time in cron format
  */
-function updateScheduledTime(time) {
+function toTime(time) {
     //convert time to time format used by scheduler (cron)
     //or use rules
     //var rule = new schedule.RecurrenceRule();
@@ -302,20 +321,80 @@ function updateScheduledTime(time) {
     return time;
 }
 
+
+/**
+ * Create and schedule an alarm.
+ * 
+ * @param alarm Javascript object containing information about an alarm such as its name and condition 
+ */
+function createAlarm(alarm) {
+    let newAlarm = schedule.scheduleJob(alarm.checkFrequency, function() {
+        checkAlarm(alarm);
+    });
+    //store in global alarms array
+    alarms.push(newAlarm);
+}
+
+/**
+ * Update an alarm job that is currently extant, its condition or its frequency.
+ * Must call upon settings change.
+ */
+function updateAlarm(alarm, propertyChanged) {
+    //TODO if any alarm or report generation params are changed
+    //for(alarm in alarms)
+    //if(alarm == this alarm)
+    //alarm.reschedule(toTime(alarm.checkFrequency));
+}
+
+/**
+ * TODO Check whether the recent data entries in the database meet a certain condition and take action 
+ * if they do.
+ * 
+ * @param alarm Javascript object containing information about an alarm such as its name and condition 
+ */
+function checkAlarm(alarm) {
+    //read database
+    readFile(dbFilepath)
+    .then(data => {
+        //TODO check if most recent database entires violate condition
+        //if so, send email
+        //if not, do nothing
+        if(data != alarm.condition) {
+            subject = 'Alarm' + alarm.name + 'from wine-cellar-back-end';
+            content = 'Condition ' + alarm.condition + ` met. Please take action to correct the 
+            wine cellar's environment.`;
+            sendEmail(subject, 'alert-email.html', content);
+        }
+        
+        //store last line read, to know where to start checking entries from next time
+
+    }).catch(err => {
+        console.log(err); //TODO
+    });
+}
+
 //#endregion
 
 //#region *** Email alterter functions ***
 
 /**
- * Send an email alert
+ * Send an email alert.
  * TODO https://www.codementor.io/joshuaaroke/sending-html-message-in-nodejs-express-9i3d3uhjr
  * TODO above link uses email-templates to load emails
+ * 
+ * @param {string} subject the optional email subject
+ * @param {string} html the optional filepath from which the email's html should be loaded
+ * @param {string} content optional content to add to the email's html
  */
-function sendEmail() {
-    //TODO load html body for this alarm
-    var html = '<h1>Hello world</h1>';
-
-    //TODO readFile('/html/alert-html.html') see Promise.all
+function sendEmail(subject, html, content) {
+    if(!subject) subject = 'Test email from wine-cellar-back-end';
+    if(!html) { 
+        html = '<p>This is a test email!</p>';
+    } else {
+        //TODO load html body for this alarm/report
+        //TODO readFile('/html/alert-html.html') see Promise.all
+        if(content) ; //TODO load in specific content 
+    }
 
     return new Promise(function(resolve, reject) {
         //TODO IMPORTANT change so don't need to get userEmailAddress from file
@@ -326,7 +405,7 @@ function sendEmail() {
             var mailOptions = {
                 from: serverEmailAddress,
                 to: userEmailAddress,
-                subject: 'Sending Email using Node.js',
+                subject: subject,
                 html: html
             };
         
@@ -373,6 +452,15 @@ function createTransporter() {
 
 //#region *** Report generator functions ***
 
+/**
+ * Generate report data
+ */
+function generateReportData() {
+
+}
+
 //#endregion
 
-app.listen(1337, '0.0.0.0');
+app.listen(1337, '0.0.0.0', function() {
+    console.log("Server listening on port 1337...")
+});
