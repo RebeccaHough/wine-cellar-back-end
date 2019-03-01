@@ -21,6 +21,16 @@ let settings;
 /** Array to hold all scheduled jobs for alarm checking */
 let alarms;
 
+//list of valid endpoints, for use in invalid request responses
+let endpoints = [
+    "/",
+    "/get-settings-data",
+    "/email-me",
+    "/add-data", 
+    "/user-settings", 
+    "/time"
+]
+
 app.use(bodyParser.json());
 //TODO to serve files may need something like express.static()
 
@@ -86,10 +96,6 @@ app.post('/add-data', function(req, res) {
  */ 
 app.get('/', function(req, res) {
     console.log('Received GET request on endpoint \'/\'.');
-    let endpoints = {
-        GET: "/, /get-settings-data, /email-me",
-        POST: "/add-data, /user-settings, /time"
-    }
     res.status(200).json({ message: "Generic GET recieved. Please use the appropriate endpoint for server functionality.", endpoints: endpoints });
 });
 
@@ -150,6 +156,53 @@ app.get('/email-me', function(req, res) {
 });
 
 //#endregion
+
+//#region *** Invalid endpoints ***
+
+//unsupported methods
+app.all('/get-settings-data', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/get-settings-data\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/add-data', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/add-data\'.');
+    methodNotSupportedHandler(res, ["POST"]);
+});
+app.all('/', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/user-settings', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/user-settings\'.');
+    methodNotSupportedHandler(res, ["POST"]);
+});
+app.all('/time', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/time\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/email-me', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/email-me\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+
+//invalid endpoints
+app.use(function (req, res) {
+    console.log('Received request on invalid endpoint.');
+    res.status(404).json({ message: "Invalid endpoint. Please use the appropriate endpoint for server functionality.", endpoints: endpoints});
+});
+
+/**
+ * Error handler for 405 errors
+ * @param {any} res response object
+ * @param {string[]} supportedMethods string array of allowed methods
+ */
+function methodNotSupportedHandler(res, supportedMethods) {
+    //add header
+    res.set({ 'Allow': supportedMethods });
+    res.status(405).json({ message: "Method not supported." });
+}
+
+//endregion
 
 //#region *** File functions ***
 
