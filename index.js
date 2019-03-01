@@ -22,6 +22,7 @@ let settings;
 let alarms;
 
 app.use(bodyParser.json());
+//TODO to serve files may need something like express.static()
 
 //#region *** Pi endpoints ***
 
@@ -33,7 +34,7 @@ app.get('/get-settings-data', function(req, res) {
     //if settings are currently stored in memory
     if(settings && settings.dataCollectionParams) {
         console.log("Sending settings to Pi.");
-        res.send(JSON.stringify(data.dataCollectionParams));
+        res.status(200).json({ message: "Settings sent.", data: data.dataCollectionParams});
     } else {
         //else read file then attempt to send relevant contents to Pi
         //(This should, in theory, rarely happen. One possible occurance would be if the app receives a
@@ -43,13 +44,10 @@ app.get('/get-settings-data', function(req, res) {
         readFile(settingsFilepath)
         .then((data) => {
             console.log("Sending settings to Pi.");
-            res.send(JSON.stringify(data.dataCollectionParams));
+            res.status(200).json({ message: "Settings sent.", data: data.dataCollectionParams});
         }).catch((err) => {
             console.error(err);
-            //TODO error message format
-            res.send(JSON.stringify({
-                error: "Failed to read user-settings file."
-            }));
+            res.status(500).json({ message: "Failed to read user-settings file. Could not send settings."});
         });
     }
  });
@@ -67,18 +65,15 @@ app.post('/add-data', function(req, res) {
         appendToFile(dbFilepath, body)
         .then(info => {
             console.log("Successfully wrote data to database file.");
-            //TODO message format
-            res.send("Successfully saved data.");
+            res.status(200).json({ message: "Successfully wrote data to database file."});
         }).catch(err => {
-            console.log("Failed to write data to database file.");
+            console.log("Failed to append data to database file.");
             console.log(err);
-            //TODO error message format
-            res.send("Failed to save data to file.");
+            res.status(500).json({ message: "Failed to append data to database file. Could not save data."});
         });
     } else {
-        console.log("Failed to append data to database file. Received data was malformatted.");
-        //TODO error message format
-        res.send("Malformatted data.");
+        console.log("Failed to append data to database file. Received data was malformed.");
+        res.status(500).json({ message: "Failed to append data to database file. Received data was malformed."});
     }
 });
 
@@ -91,8 +86,11 @@ app.post('/add-data', function(req, res) {
  */ 
 app.get('/', function(req, res) {
     console.log('Received GET request on endpoint \'/\'.');
-    //TODO maybe save '/' for just a list of possible endpoints
-    res.send("Hello get!");
+    let endpoints = {
+        GET: "/, /get-settings-data, /email-me",
+        POST: "/add-data, /user-settings, /time"
+    }
+    res.status(200).json({ message: "Generic GET recieved. Please use the appropriate endpoint for server functionality.", endpoints: endpoints });
 });
 
 /** 
@@ -114,24 +112,18 @@ app.post('/user-settings', function(req, res) {
     //         //save settings in memory ONLY if file write was succesful to avoid discrepancy
     //         settings = body;
     //         console.log("Successfully wrote settings to file.");
-    //         //TODO message format
-    //         res.send("Successfully saved settings.");
+    //         res.status(200).json({ message: "Successfully saved settings." });
     //     }).catch(err => {
-    //         console.log("Failed to write settings to file; disregarding settings.");
+    //         //if setings fail to be written to file, disregard them
+    //         console.log("Failed to write settings to file. Could not save settings.");
     //         console.log(err);
-    //         //TODO error message format
-    //         res.send("Failed to save settings.");
+    //         res.status(500).json({ message: "Failed to write settings to file. Could not save settings." });
     //     });
     // } else {
-    //     console.log("POST request body malformatted, could not update settings.");
-    //     //TODO define error messages' format properly, using error codes and JSON?
-    //     //e.g. something like
-    //     //res.send(new HTTPError({
-    //     //     //some JSON
-    //     // }));
-    //     res.send("Malformatted body.");
+    //      console.log("Failed to save settings. Received data was malformed.");
+    //      res.status(500).json({ message: "Failed to save settings. Received data was malformed."});
     // }
-    res.send("Currently disabled.");
+    res.status(500).json({ message: "Endpoint currently disabled."});
 });
 
 /** 
@@ -139,7 +131,7 @@ app.post('/user-settings', function(req, res) {
  */
 app.post('/time', function(req, res) {
     console.log('Received POST request on endpoint \'/time\'.');
-    res.send("Hello time!");
+    res.status(500).json({ message: "POST request received on endpoint /time. Functionality current not implemented."});
 });
 
 /**
@@ -149,11 +141,11 @@ app.get('/email-me', function(req, res) {
     console.log('Received GET request on endpoint \'/email-me\'.');
     sendEmail()
     .then((info) => {
-        res.send("Successfully sent test email.");
+        res.status(200).json({ message:"Successfully sent test email." });
     }).catch((err) => {
         console.log("Failed to send test email.");
         console.log(err);
-        res.send("Failed to send test email.");
+        res.status(500).json({ message:"Failed to send test email." });
     });
 });
 
