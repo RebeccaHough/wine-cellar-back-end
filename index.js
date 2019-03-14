@@ -16,12 +16,14 @@ const serverEmailAddress = 'wine.cellar.backend@gmail.com';
 const serverEmailPassword = 'W1n3-C3114r';
 const serverEmailService = 'gmail';
 
-//variables loaded from user-settings.json
+/** Settings loaded from user-settings.json */
 let settings;
 /** Array to hold all scheduled jobs for alarm checking */
 let alarms;
+/** Object to hold scheduled job for report generation*/
+let report;
 
-//list of valid endpoints, for use in invalid request responses
+/** List of valid endpoints, for use in invalid request responses */
 let endpoints = [
     "/",
     "/get-settings-data",
@@ -30,6 +32,10 @@ let endpoints = [
     "/user-settings", 
     "/time"
 ]
+/** Reference to http.Server, set with app.listen() */
+let server;
+/** TODO last checked */
+let lastChecked;
 
 app.use(bodyParser.json());
 //TODO to serve files may need something like express.static()
@@ -41,25 +47,14 @@ app.use(bodyParser.json());
  */ 
 app.get('/get-settings-data', function(req, res) {
     console.log('Received GET request on endpoint \'/get-settings-data\'.');
-    //if settings are currently stored in memory
-    if(settings && settings.dataCollectionParams) {
+    loadUserSettings('dataCollectionParams')
+    .then((settings) => {
         console.log("Sending settings to Pi.");
-        res.status(200).json({ message: "Settings sent.", data: data.dataCollectionParams});
-    } else {
-        //else read file then attempt to send relevant contents to Pi
-        //(This should, in theory, rarely happen. One possible occurance would be if the app receives a
-        //request before the main has finished loading user-settings into memory. In which case,
-        //the action of reading the file again may be redundant, but is more proactive and easier than 
-        //waiting an unknown amount of time for main to load in said settings.)
-        readFile(settingsFilepath)
-        .then((data) => {
-            console.log("Sending settings to Pi.");
-            res.status(200).json({ message: "Settings sent.", data: data.dataCollectionParams});
-        }).catch((err) => {
-            console.error(err);
-            res.status(500).json({ message: "Failed to read user-settings file. Could not send settings."});
-        });
-    }
+        res.status(200).json({ message: "Settings sent.", data: settings});
+    }).catch((err) => {
+        console.error(err);
+        res.status(500).json({ message: "Failed to read user-settings file. Could not send settings."});
+    });
  });
 
 /**
@@ -71,6 +66,8 @@ app.post('/add-data', function(req, res) {
     let body = req.body;
     //if req.body is in expected format
     if(validatePiData(body)) {
+        //convert to CSV format
+        body = jsToCSV(body);
         //save new data to database
         appendToFile(dbFilepath, body)
         .then(info => {
@@ -145,10 +142,11 @@ app.post('/time', function(req, res) {
  */
 app.get('/email-me', function(req, res) {
     console.log('Received GET request on endpoint \'/email-me\'.');
+    //send empty test email
     sendEmail()
-    .then((info) => {
+    .then(info => {
         res.status(200).json({ message:"Successfully sent test email." });
-    }).catch((err) => {
+    }).catch(err => {
         console.log("Failed to send test email.");
         console.log(err);
         res.status(500).json({ message:"Failed to send test email." });
@@ -202,7 +200,7 @@ function methodNotSupportedHandler(res, supportedMethods) {
     res.status(405).json({ message: "Method not supported." });
 }
 
-//endregion
+//#endregion
 
 //#region *** File functions ***
 
@@ -226,17 +224,17 @@ function readFile(filepath) {
 /** 
  * Write specified by content to the file specified by filepath.
  * 
- * Return a Promise version of fs.appendFile().
- * Usage: appendToFile(filename, content).then(data => {...}).catch(err => {...}));
+ * Return a Promise version of fs.writeFile().
+ * Usage: writeToFile(filename, content).then(data => {...}).catch(err => {...}));
  * 
- * @param {string} filepath path to file to append to
- * @param {string} content the content to append
+ * @param {string} filepath path to file to write to
+ * @param {string} content the content to write
  * @returns {Promise} a Promise
  */
 function writeToFile(filepath, content) {
     return new Promise(function(resolve, reject) {
         fs.writeFile(filepath, content, function(err){
-            if (err) 
+            if(err) 
                 reject(err); 
             else
                 resolve();
@@ -257,7 +255,7 @@ function writeToFile(filepath, content) {
 function appendToFile(filepath, content) {
     return new Promise(function(resolve, reject) {
         fs.appendFile(filepath, content, function(err){
-            if (err) 
+            if(err) 
                 reject(err); 
             else
                 resolve();
@@ -268,35 +266,92 @@ function appendToFile(filepath, content) {
 /**
  * Check the data receievd from the Pi is well-formed and valid.
  * 
- * The data is well-formed if it is an array of arrays that contain exactly 3 'number' objects.
+ * The data is well-formed if it is an array of arrays that contain exactly 3 'number' objects, and the humidity attribute is a number between 0 and 100.
  * 
- * TODO need to handle malformed data better
- * 
- * @param {any} data a javascript object to be checked against the above conditions
+ * @param {any} data an array of javascript objects to be checked against the above conditions
  * @return {boolean} a boolean indicating the data's validity
  */
 function validatePiData(data) {
-    for(let array in data) {
-        if(
-            (items = array.split(','))
-            && items.length == 3
-            && items[0].instanceof(number) //unix timestamp
-            && items[1].instanceof(number) //temperature
-            && items[2].instanceof(number) //relative humidity percentage
-        ) return false;
+    //use try/catch in case the data is malformed
+    try {
+        for(let object in data) {
+            if(!(
+                object.length == 3
+                && (object.time).instanceof(number) //unix timestamp
+                && (object.temperature).instanceof(number) //temperature
+                && (object.humidity).instanceof(number) //relative humidity percentage
+                && (object.humidity) >= 0
+                && (object.humidity) <= 100
+            )) {
+                console.log("Pi data failed the validation check.");
+                return false;
+            }
+        }
+        //if all the data passes the checks
+        console.log("Pi data sucessfully validated.");
+        return true;
+    } catch(err) {
+        console.log("Pi data failed the validation check.");
+        console.log(err);
+        return false;
     }
-    return true;
 }
 
 /**
+ * Convert a JavaScript object with named properties to CSV data using the properties' values.
+ * E.g.
+ * {
+ *     cat: "meow",
+ *     dog: "woof"
+ * }
+ * becomes the string:
+ * "meow, woof"
+ * Each object is on its own new line
+ * 
+ * @param jsobjects a Javascript object or array of objects
+ */
+let jsToCSV = (function(jsobjects) {
+    function objectToCSVString(obj) {
+        //order not guaranteed in JSON
+        //so store in time, temp, humidity order
+        return obj.time + "," + obj.temperature + "," + obj.humidity
+    }
+    return function _jsToCSV(jsobjects) {
+        csvString = "";
+        if(Array.isArray(jsobjects)) {
+            for(object in jsobjects) {
+                csvString = objectToCSVString(object);
+                csvString += "\n";
+            }
+            //get rid of last newline
+            csvString = csvString.substring(0, csvString.length - 1);
+        } else if(typeof jsobjects === 'object') {
+            csvString = objectToCSVString(jsobjects);
+        } else return null;
+        return csvString;
+    }
+})();
+
+
+/**
  * Load user settings from file
- * https://stackoverflow.com/questions/10049557/reading-all-files-in-a-directory-store-them-in-objects-and-send-the-object?answertab=active#tab-top
- * http://www.yaoyuyang.com/2017/01/20/nodejs-batch-file-processing.html
  * 
  * @param setting optional parameter to specify which setting to retreive
  * @returns the values of the setting(s) requested as a JS object
  */
 function loadUserSettings(setting) {
+    //if settings already exists, resolve instantly
+    if(settings) 
+        if(typeof setting !== 'undefined')
+            if(settings[setting])
+                return Promise.resolve(settings[setting]); 
+            else {
+                console.log("Requested setting does not exist.");
+                return Promise.reject("Requested setting does not exist.");
+            }
+        else
+            return Promise.resolve(settings);
+    //else read settings from file
     return new Promise(function(resolve, reject) {
         readFile(settingsFilepath)
         .then(data => {
@@ -305,12 +360,20 @@ function loadUserSettings(setting) {
             //if specific setting was asked for
             if(typeof setting !== 'undefined') {
                 //return specific setting
-                resolve(userSettings[setting]);
+                if(userSettings[setting])
+                    resolve(userSettings[setting]); 
+                else {
+                    console.log("Requested setting does not exist.");
+                    reject("Requested setting does not exist.");
+                }
             } else {
                 //else return all settings
                 resolve(userSettings);
             }
         }).catch(err => {
+            console.log("Failed to read file. Could not load settings.");
+            console.log(err);
+            //inform caller
             reject(err);
         });
     });
@@ -326,44 +389,65 @@ function loadUserSettings(setting) {
  */
 (function setup() {
     console.log("Starting wine cellar back end.")
-    //load various settings into memory
-    loadUserSettings()
-    .then(loadSettings => {
-        settings = loadSettings;
-        alarms = [];
-        
-        //for each alarm, schedule a job based on check frequency
-        for(alarm in settings.alarms) {
-            if(!alarm in alarms) createAlarm(alarm);
-        }
+    let retries = 0;
+    while(retries < 30) {
+        //load various settings into memory
+        loadUserSettings()
+        .then(loadSettings => {
+            settings = loadSettings;
+            alarms = [];
+            
+            //stop retrying
+            retries = 30;
 
-        //schedule a job for report generation
-        //when = toTime(settings.reportParams.reportGenerationFrequency)
-        let report = schedule.scheduleJob('42 * * * *', function() {
-            subject = "Monthly wine cellar report"
-            //generate necessary report details
-            content = generateReportData();
-            sendEmail(subject, 'html/report.html', content);
+            //for each alarm, schedule a job based on check frequency
+            for(alarm in settings.alarms) {
+                createAlarm(alarm);
+            }
+    
+            //schedule a job for report generation
+            //when = toCronTime(settings.reportParams.reportGenerationFrequency)
+            report = schedule.scheduleJob('0 12 * */1 *', function() {
+                subject = "Wine cellar report"
+                //generate necessary report details
+                content = generateReportData();
+                readFile('html/report.html')
+                .then(data => {
+                    sendEmail(subject, data, content);
+                })
+            });
+
+        }).catch(err => {
+            retries++;
+            if(retries < 30)
+                console.log("Retrying... Total retries: " + retires + ".");
+            else {
+                console.log("Retried 30 times without success. Shutting server down...");
+                //exit server
+                server.close();
+            }
         });
-    }).catch(err => {
-        console.log(err); //TODO
-    });
+    }
 })();
 
 /**
- * TODO update how often a sheduled task runs (may not be able to use a function for this)
- * https://github.com/node-schedule/node-schedule
- * @param time time in ??
- * @returns time in cron format
+ * Convert a time in human readable format to cron format
+ * @param {string} time time in human readable format
+ * @returns {string} time in cron format
  */
-function toTime(time) {
+function toCronTime(time) {
+    let cronTime = time;
     //convert time to time format used by scheduler (cron)
+    //every == /
+    //if(time.contains("every"))
+    //otherwise, run at this exact time (not that useful in this case?)
+    //minute == first star, day == second star, month == third star
+    //if no time specified
+        //use 12pm i.e. 0 12 * * *
     //or use rules
     //var rule = new schedule.RecurrenceRule();
     //rule.minute = 42;
-    //or use dates
-    //ver date = new Date();
-    return time;
+    return cronTime;
 }
 
 
@@ -373,10 +457,11 @@ function toTime(time) {
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
 function createAlarm(alarm) {
-    let newAlarm = schedule.scheduleJob(alarm.checkFrequency, function() {
-        checkAlarm(alarm);
-    });
-    //store in global alarms array
+    //pass the correct alarm to the function
+    let checkAlarmBind = checkAlarm.bind(null, alarm);
+    //set the callback function for this alarm check
+    let newAlarm = schedule.scheduleJob(alarm.checkFrequency, checkAlarmBind);
+    //store this alarm in global alarms array
     alarms.push(newAlarm);
 }
 
@@ -392,8 +477,7 @@ function updateAlarm(alarm, propertyChanged) {
 }
 
 /**
- * TODO Check whether the recent data entries in the database meet a certain condition and take action 
- * if they do.
+ * TODO Check whether the recent data entries in the database meet a certain condition and take action if they do.
  * 
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
@@ -401,19 +485,42 @@ function checkAlarm(alarm) {
     //read database
     readFile(dbFilepath)
     .then(data => {
-        //TODO check if most recent database entires violate condition
+        conditionMet = false;
+        //TODO parse data back into a Javascript object
+        data = CSVToJS(data);
+
+        //check data against alarm condition
+        for(line in data) {
+            //TODO only check if most recent database entires violate condition
+            if(line.time > lastChecked) {
+                if(eval(alarm.condition) (line))
+                    conditionMet = true;
+            }
+        }
+
+        //TODO set last checked to now
+        //lastChecked = now.toUNIXtimestamp();
+
         //if so, send email
         //if not, do nothing
-        if(data != alarm.condition) {
-            subject = 'Alarm' + alarm.name + 'from wine-cellar-back-end';
-            content = 'Condition ' + alarm.condition + ` met. Please take action to correct the 
-            wine cellar's environment.`;
-            sendEmail(subject, 'alert-email.html', content);
+        if(conditionMet) {
+            console.log("Alarm " + alarm.name + " condition met.");
+            if(alarm.isSubscribedTo) {
+                subject = "Alarm " + alarm.name + " from wine-cellar-back-end";
+                content = "Condition " + alarm.condition + " met. Please take action to correct the wine cellar's environment.";
+                readFile('alert-email.html')
+                .then(data => {
+                    sendEmail(subject, data, content);
+                });
+            } else {
+                console.log("Email alerts for " + alarm.name + " are not turned on. No email will be sent");
+            }
         }
         
-        //store last line read, to know where to start checking entries from next time
+        //TODO store last line read, to know where to start checking entries from next time
 
     }).catch(err => {
+        console.log("Encountered error while attempting to check database for alarm " + alarm.name + ".");
         console.log(err); //TODO
     });
 }
@@ -428,26 +535,19 @@ function checkAlarm(alarm) {
  * TODO above link uses email-templates to load emails
  * 
  * @param {string} subject the optional email subject
- * @param {string} html the optional filepath from which the email's html should be loaded
+ * @param {string} html the optional html string to send
  * @param {string} content optional content to add to the email's html
  */
 function sendEmail(subject, html, content) {
     if(!subject) subject = 'Test email from wine-cellar-back-end';
-    if(!html) { 
-        html = '<p>This is a test email!</p>';
-    } else {
-        //TODO load html body for this alarm/report
-        //TODO readFile('/html/alert-html.html') see Promise.all
-        if(content) ; //TODO load in specific content 
-    }
+    if(!html) html = '<p>This is a test email!</p>';
+    if(content) ; //TODO dynamically alter emails' html content
 
     return new Promise(function(resolve, reject) {
-        //TODO IMPORTANT change so don't need to get userEmailAddress from file
-        //load user email then send email
         loadUserSettings('userEmailAddress')
         .then(userEmailAddress => {
             //initialise email options
-            var mailOptions = {
+            let mailOptions = {
                 from: serverEmailAddress,
                 to: userEmailAddress,
                 subject: subject,
@@ -498,14 +598,35 @@ function createTransporter() {
 //#region *** Report generator functions ***
 
 /**
- * Generate report data
+ * TODO Generate report data
  */
 function generateReportData() {
+    //over n timespan
+    //generate graph
+    //charts.js .toBase64Image();
+    //https://www.chartjs.org/docs/latest/developers/api.html#tobase64image
+    //https://github.com/chartjs/Chart.js
 
+    //do statitsics
+
+    //generate email html
+    //readFile('').then(data => {sendEmail(subject, html, content)};
+}
+
+/**
+ * Update report
+ */
+function updateReport(reportSettings, propertyChanged) {
+    if(propertyChanged == 'reportGenerationFrequency') {
+        //change report frequency
+        report.reschedule(toCrontTime(reportSettings.reportGenerationFrequency));
+    } 
+    // else if(propertyChanged == 'reportGenerationFrequency') {
+    // }
 }
 
 //#endregion
 
-app.listen(1337, '0.0.0.0', function() {
+server = app.listen(1337, '0.0.0.0', function() {
     console.log("Server listening on port 1337...")
 });

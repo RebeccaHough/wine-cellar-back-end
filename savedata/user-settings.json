@@ -2,21 +2,21 @@
     "alarms": [
         {
             "name": "Alarm 1",
-            "condition": "",
+            "condition": "temperature < 11",
             "isSubscribedTo": false,
             "checkFrequency": "as needed"
         },
         {
             "name": "Alarm 2",
             "condition": "",
-            "isSubscribedTo": true,
+            "isSubscribedTo": false,
             "checkFrequency": "every X days"
         }
     ],
     "dataCollectionParams": {
         "collectTemperature": true,
         "collectHumidity": true,
-        "collectionFrequency": 30
+        "sensorpollingRate": 30
     },
     "reportParams": {
         "showTemperature": true,
