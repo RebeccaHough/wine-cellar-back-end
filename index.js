@@ -43,7 +43,7 @@ app.use(bodyParser.json());
 //#region *** Pi endpoints ***
 
 /** 
- * Send Pi data collection settings
+ * Send Pi data collection settings.
  */ 
 app.get('/data-collection-settings', function(req, res) {
     console.log('Received GET request on endpoint \'/get-settings-data\'.');
@@ -59,10 +59,10 @@ app.get('/data-collection-settings', function(req, res) {
  });
 
 /**
- * Append data receieved from Pi to the database (the file pointed to by dbFilepath)
+ * Append data receieved from Pi to the database (the file pointed to by dbFilepath).
  */
-app.post('/add-data', function(req, res) {
-    console.log('Received POST request on endpoint \'/add-data\'.');
+app.post('/database', function(req, res) {
+    console.log('Received POST request on endpoint \'/database\'.');
     //extract body
     let body = req.body;
     //if req.body is in expected format
@@ -90,15 +90,31 @@ app.post('/add-data', function(req, res) {
 //#region *** Front-end client endpoints ***
 
 /** 
- * Send database
+ * Generic endpoint.
  */ 
 app.get('/', function(req, res) {
     console.log('Received GET request on endpoint \'/\'.');
     res.status(200).json({ message: "Generic GET recieved. Please use the appropriate endpoint for server functionality.", endpoints: endpoints });
 });
 
+/**
+ * Send database.
+ */
+app.get('/database', function(req, res) {
+    console.log('Received GET request on endpoint \'/database\'.');
+    //load database
+    readFile(dbFilepath)
+    .then((database) => {
+        console.log("Sending database.");
+        res.status(200).json({ message: "Database sent.", data: database});
+    }).catch((err) => {
+        console.error(err);
+        res.status(500).json({ message: "Failed to read database file. Could not send database."});
+    });
+ });
+ 
 /** 
- * Send settings data
+ * Send settings data.
  */ 
 app.get('/user-settings', function(req, res) {
     console.log('Received GET request on endpoint \'/user-settings\'.');
@@ -146,16 +162,8 @@ app.post('/user-settings', function(req, res) {
     res.status(500).json({ message: "Endpoint currently disabled."});
 });
 
-/** 
- * Set time intervals 
- */
-app.post('/time', function(req, res) {
-    console.log('Received POST request on endpoint \'/time\'.');
-    res.status(500).json({ message: "POST request received on endpoint /time. Functionality current not implemented."});
-});
-
 /**
- * Send test email to email address saved in user-settings.json
+ * Send test email to email address saved in user-settings.json.
  */
 app.get('/email-me', function(req, res) {
     console.log('Received GET request on endpoint \'/email-me\'.');
@@ -170,33 +178,50 @@ app.get('/email-me', function(req, res) {
     });
 });
 
+/**
+ * Send a report to email address saved in user-settings.json.
+ * Manual trigger for report generation.
+ */
+app.get('/send-report', function(req, res) {
+    console.log('Received GET request on endpoint \'/send-report\'.');
+    //send empty test email
+    sendEmail()
+    .then(info => {
+        res.status(200).json({ message:"Successfully sent report." });
+    }).catch(err => {
+        console.log("Failed to send report.");
+        console.log(err);
+        res.status(500).json({ message:"Failed to send report." });
+    });
+});
+
 //#endregion
 
 //#region *** Invalid endpoints ***
 
 //unsupported methods
-app.all('/get-settings-data', function(req, res) {
-    console.log('Received unsupported method request endpoint \'/get-settings-data\'.');
-    methodNotSupportedHandler(res, ["GET"]);
-});
-app.all('/add-data', function(req, res) {
-    console.log('Received unsupported method request endpoint \'/add-data\'.');
-    methodNotSupportedHandler(res, ["POST"]);
-});
 app.all('/', function(req, res) {
     console.log('Received unsupported method request endpoint \'/\'.');
     methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/data-collection-settings', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/data-collection-settings\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/database', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/database\'.');
+    methodNotSupportedHandler(res, ["GET", "POST"]);
 });
 app.all('/user-settings', function(req, res) {
     console.log('Received unsupported method request endpoint \'/user-settings\'.');
     methodNotSupportedHandler(res, ["GET", "POST"]);
 });
-app.all('/time', function(req, res) {
-    console.log('Received unsupported method request endpoint \'/time\'.');
-    methodNotSupportedHandler(res, ["GET"]);
-});
 app.all('/email-me', function(req, res) {
     console.log('Received unsupported method request endpoint \'/email-me\'.');
+    methodNotSupportedHandler(res, ["GET"]);
+});
+app.all('/send-report', function(req, res) {
+    console.log('Received unsupported method request endpoint \'/send-report\'.');
     methodNotSupportedHandler(res, ["GET"]);
 });
 
