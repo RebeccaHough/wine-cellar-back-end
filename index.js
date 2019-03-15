@@ -130,14 +130,14 @@ app.get('/user-settings', function(req, res) {
  });
 
 /** 
- * Change/set user settings, and save them to file. 
+ * Overwrite current user settings, saving them to file and memory. 
  * 
  * Failure to write new settings to file will cause the new settings to be completely discarded; 
  * i.e. the script must be able to save the new settings in memory AND write them to file for 
  * them to be updated; it is an atomic operation.
  */ 
-app.post('/user-settings', function(req, res) {
-    console.log('Received POST request on endpoint \'/user-settings\'.');
+app.put('/user-settings', function(req, res) {
+    console.log('Received PUT request on endpoint \'/user-settings\'.');
     //TODO IMPORTANT handle just changing one setting or all of them
     //body may need to have keys 'settingName: value' and settings var can be used to fill in the rest
     //need to define this from client end as well
@@ -214,7 +214,7 @@ app.all('/database', function(req, res) {
 });
 app.all('/user-settings', function(req, res) {
     console.log('Received unsupported method request endpoint \'/user-settings\'.');
-    methodNotSupportedHandler(res, ["GET", "POST"]);
+    methodNotSupportedHandler(res, ["GET", "PUT"]);
 });
 app.all('/email-me', function(req, res) {
     console.log('Received unsupported method request endpoint \'/email-me\'.');
