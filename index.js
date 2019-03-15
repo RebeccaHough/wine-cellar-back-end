@@ -43,13 +43,14 @@ app.use(bodyParser.json());
 //#region *** Pi endpoints ***
 
 /** 
- * Send Pi settings data
+ * Send Pi data collection settings
  */ 
-app.get('/get-settings-data', function(req, res) {
+app.get('/data-collection-settings', function(req, res) {
     console.log('Received GET request on endpoint \'/get-settings-data\'.');
+    //load dataCollectionParams portion of settings
     loadUserSettings('dataCollectionParams')
     .then((settings) => {
-        console.log("Sending settings to Pi.");
+        console.log("Sending data collection settings to Pi.");
         res.status(200).json({ message: "Settings sent.", data: settings});
     }).catch((err) => {
         console.error(err);
@@ -95,6 +96,22 @@ app.get('/', function(req, res) {
     console.log('Received GET request on endpoint \'/\'.');
     res.status(200).json({ message: "Generic GET recieved. Please use the appropriate endpoint for server functionality.", endpoints: endpoints });
 });
+
+/** 
+ * Send settings data
+ */ 
+app.get('/user-settings', function(req, res) {
+    console.log('Received GET request on endpoint \'/user-settings\'.');
+    //load all settings
+    loadUserSettings()
+    .then((settings) => {
+        console.log("Sending settings.");
+        res.status(200).json({ message: "Settings sent.", data: settings});
+    }).catch((err) => {
+        console.error(err);
+        res.status(500).json({ message: "Failed to read user-settings file. Could not send settings."});
+    });
+ });
 
 /** 
  * Change/set user settings, and save them to file. 
@@ -172,7 +189,7 @@ app.all('/', function(req, res) {
 });
 app.all('/user-settings', function(req, res) {
     console.log('Received unsupported method request endpoint \'/user-settings\'.');
-    methodNotSupportedHandler(res, ["POST"]);
+    methodNotSupportedHandler(res, ["GET", "POST"]);
 });
 app.all('/time', function(req, res) {
     console.log('Received unsupported method request endpoint \'/time\'.');
