@@ -5,6 +5,7 @@ var fs = require('fs');
 var nodemailer = require('nodemailer');
 var schedule = require('node-schedule');
 var bodyParser = require('body-parser');
+var cors = require('cors');
 
 //file paths
 const dbFilepath = './savedata/database.csv';
@@ -23,22 +24,41 @@ let alarms;
 /** Object to hold scheduled job for report generation*/
 let report;
 
+//for report statistics generation
+const ALLOWABLE_TEMPERATURE_VARIATION = 5;
+const ALLOWABLE_HUMIDITY_VARIATION = 50;
+
 /** List of valid endpoints, for use in invalid request responses */
 let endpoints = [
     "/",
-    "/get-settings-data",
-    "/email-me",
-    "/add-data", 
+    "/data-collection-settings",
+    "/database", 
     "/user-settings", 
-    "/time"
+    "/email-me",
+    "/send-report"
 ]
 /** Reference to http.Server, set with app.listen() */
 let server;
-/** TODO last checked */
+/** Time data was last checked for alarm */
 let lastChecked;
+/** Time last report was generated */
+let lastReport;
+
+//to only allow one origin access, use the following in app.use('/endpoint', cors(corsOptions) ...)
+// var corsOptions = {
+//     origin: 'http://localhost:4200',
+//     optionsSuccessStatus: 200
+// }
+  
 
 app.use(bodyParser.json());
 //TODO to serve files may need something like express.static()
+
+//enable all CORS requests
+app.use(cors());
+
+//enable CORS pre-flight for all endpoints
+//app.options('*', cors());
 
 //#region *** Pi endpoints ***
 
@@ -46,7 +66,7 @@ app.use(bodyParser.json());
  * Send Pi data collection settings.
  */ 
 app.get('/data-collection-settings', function(req, res) {
-    console.log('Received GET request on endpoint \'/get-settings-data\'.');
+    console.log('Received GET request on endpoint \'/data-collection-settings\'.');
     //load dataCollectionParams portion of settings
     loadUserSettings('dataCollectionParams')
     .then((settings) => {
@@ -253,6 +273,7 @@ function methodNotSupportedHandler(res, supportedMethods) {
  * @returns {Promise} a Promise
 */
 function readFile(filepath) {
+    console.log("Reading file " + filepath);
     return new Promise(function(resolve, reject) {
         fs.readFile(filepath, function(err, data){
             if (err) 
@@ -274,6 +295,7 @@ function readFile(filepath) {
  * @returns {Promise} a Promise
  */
 function writeToFile(filepath, content) {
+    console.log("Writing to file " + filepath);
     return new Promise(function(resolve, reject) {
         fs.writeFile(filepath, content, function(err){
             if(err) 
@@ -295,6 +317,7 @@ function writeToFile(filepath, content) {
  * @returns {Promise} a Promise
  */
 function appendToFile(filepath, content) {
+    console.log("Appending to file " + filepath);
     return new Promise(function(resolve, reject) {
         fs.appendFile(filepath, content, function(err){
             if(err) 
@@ -340,7 +363,7 @@ function validatePiData(data) {
 }
 
 /**
- * Convert a JavaScript object with named properties to CSV data using the properties' values.
+ * Convert a JavaScript object/array with named properties to CSV data using the properties' values.
  * E.g.
  * {
  *     cat: "meow",
@@ -393,6 +416,7 @@ function loadUserSettings(setting) {
             }
         else
             return Promise.resolve(settings);
+    
     //else read settings from file
     return new Promise(function(resolve, reject) {
         readFile(settingsFilepath)
@@ -431,54 +455,61 @@ function loadUserSettings(setting) {
  */
 (function setup() {
     console.log("Starting wine cellar back end.")
-    let retries = 0;
-    while(retries < 30) {
         //load various settings into memory
         loadUserSettings()
         .then(loadSettings => {
             settings = loadSettings;
             alarms = [];
-            
-            //stop retrying
-            retries = 30;
 
             //for each alarm, schedule a job based on check frequency
             for(alarm in settings.alarms) {
                 createAlarm(alarm);
             }
     
+            lastReport = 0;
             //schedule a job for report generation
-            //when = toCronTime(settings.reportParams.reportGenerationFrequency)
-            report = schedule.scheduleJob('0 12 * */1 *', function() {
-                subject = "Wine cellar report"
-                //generate necessary report details
-                content = generateReportData();
-                readFile('html/report.html')
+            let when = toCronTime(settings.reportParams.reportGenerationFrequency)
+            report = schedule.scheduleJob(when, function() {
+                //get data between now and last report send
+                readFile(dbFilepath)
                 .then(data => {
-                    sendEmail(subject, data, content);
-                })
+                    data = getDataBetween(data, lastReport, Date.now());
+                    lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
+                    //generate report and send it
+                    if(generateReport())
+                        console.log("Report successfully generated.");
+                    else
+                        console.log("Failed to generate report.");
+                }).catch(err => {
+                    console.error(err);
+                });
             });
 
         }).catch(err => {
-            retries++;
-            if(retries < 30)
-                console.log("Retrying... Total retries: " + retires + ".");
-            else {
-                console.log("Retried 30 times without success. Shutting server down...");
-                //exit server
-                server.close();
-            }
+            //TODO should retry
+            // retries++;
+            // if(retries < 30)
+            //     console.log("Retrying... Total retries: " + retires + ".");
+            // else {
+                // console.log("Retried 30 times without success. Shutting server down...");
+                // //exit server
+                // server.close();
+            // }
+            console.log("Couldn't read user-settings file. Shutting server down...");
+            //exit server
+            server.close();
         });
-    }
 })();
 
 /**
  * Convert a time in human readable format to cron format
- * @param {string} time time in human readable format
+ * @param {string} time time in human-readable format
  * @returns {string} time in cron format
  */
 function toCronTime(time) {
-    let cronTime = time;
+    let cronTime;
+    if(time === 'monthly') cronTime = '0 12 1 */1 *'; //every month on the first at 12:00pm
+    if(time === 'weekly') cronTime = '0 12 * * 1'; //every monday at 12:00pm
     //convert time to time format used by scheduler (cron)
     //every == /
     //if(time.contains("every"))
@@ -492,6 +523,35 @@ function toCronTime(time) {
     return cronTime;
 }
 
+/**
+ * Search data array and return an array of data for which the time prop is within the range [endTime - startTime].
+ * If startTime is greater than endTime, the times will be swapped to allow execution to continue.
+ * Note: assumes array is sorted in increasing time order.
+ * 
+ * @param {{time: number, temperature: number, humidity: number}[]} data 
+ * @param {number} startTime time to start from, defaults to 0 or the start of the data
+ * @param {number} endTime time to end at, defaults to now
+ */
+function getDataBetween(data, startTime, endTime) {
+    if(!data) return; //TODO fail gracefully
+    if(!startTime) startTime = 0; //00:00:00 UTC on 1 January 1970
+    if(!endTime) endTime = Date.now();
+    if(!(startTime < endTime)) {
+        //swap
+        var temp = startTime;
+        startTime = endTime;
+        endTime = temp;
+    }
+
+    let output = [];
+    //itterate backwards, to save time in the most common use-case of needing only the most recent data
+    for(let i = data.length - 1; i >= 0; i--) {
+        //for every time, if time is between startTime and endTime, store it, else ignore
+        if(data[i].time < startTime) break;
+        if(data[i].time <= endTime) output.push(data[i]);
+    }
+    return output;
+}
 
 /**
  * Create and schedule an alarm.
@@ -637,28 +697,103 @@ function createTransporter() {
 
 //#endregion
 
-//#region *** Report generator functions ***
+//#region *** Report generation functions ***
 
 /**
- * TODO Generate report data
+ * TODO Generate report and send it
+ * @param {} data array of objects with 
  */
-function generateReportData() {
+function generateReport(data) {
+
     //over n timespan
     //generate graph
     //charts.js .toBase64Image();
     //https://www.chartjs.org/docs/latest/developers/api.html#tobase64image
     //https://github.com/chartjs/Chart.js
 
-    //do statitsics
+    //compute statitsics
+    minTemperature = min(data, 'temperature');
+    maxTemperature = max(data, 'temperature');
+    minHumidity = min(data, 'humidity');
+    maxHumidity = max(data, 'humidity');
+    if(!isAcceptableDifference(minTemperature, maxTemperature, 'temperature')) {
+        //print isn't acceptable
+    }
+    if(!isAcceptableDifference(minHumidity, maxHumidity, 'humidity')) {
+        //print isn't acceptable
+    }
 
-    //generate email html
-    //readFile('').then(data => {sendEmail(subject, html, content)};
+    subject = "Wine cellar report";
+    content = '';
+
+    //generate email html and send it
+    readFile('html/report.html')
+    .then(data => {
+        sendEmail(subject, data, content);
+    });
 }
 
 /**
- * Update report
+ * Find max from array of objects for property prop
+ * @param {Data[]} data 
+ * @param {string} prop 
  */
-function updateReport(reportSettings, propertyChanged) {
+function min(data, prop) {
+    if(!data || !prop) {
+        console.log("Incorrect usage of min function.");
+        return 0;
+    }
+    min = 0;
+    for(obj of data) {
+        if(obj[prop] < min) min = obj[prop];
+    }
+    return min;
+}
+
+/**
+ * Find max from array of objects for property prop
+ * @param {Data[]} data 
+ * @param {string} prop 
+ */
+function max(data, prop) {
+    if(!data || !prop) {
+        console.log("Incorrect usage of max function.");
+        return 0;
+    }
+    max = 0;
+    for(obj of data) {
+        if(obj[prop] < max) max = obj[prop];
+    }
+    return max;
+}
+
+/**
+ * Determine if the difference between a max and min for either temperature is acceptable or not
+ * @param {number} max 
+ * @param {number} min 
+ * @param {string} prop string of 'temperature' or 'humidity'
+ */
+function isAcceptableDifference(max, min, prop) {
+    if(!prop || prop != 'temperature' || prop != 'humidity' || !min || !max) {
+        console.log("Incorrect usage of isAcceptableDifference function.");
+        return true;
+    }
+    if(prop == 'temperature') {
+        if((max-min) > ALLOWABLE_TEMPERATURE_VARIATION) {
+            return false;
+        } else return true;
+    }
+    if(prop == 'humidity') {
+        if((max-min) > ALLOWABLE_HUMDITY_VARIATION) {
+            return false;
+        } else return true;
+    }
+}
+
+/**
+ * Update report settings
+ */
+function updateReportSettings(reportSettings, propertyChanged) {
     if(propertyChanged == 'reportGenerationFrequency') {
         //change report frequency
         report.reschedule(toCrontTime(reportSettings.reportGenerationFrequency));
