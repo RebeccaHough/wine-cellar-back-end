@@ -159,19 +159,16 @@ app.get('/user-settings', function(req, res) {
  */ 
 app.put('/user-settings', function(req, res) {
     console.log('Received PUT request on endpoint \'/user-settings\'.');
-    //TODO IMPORTANT handle just changing one setting or all of them
-    //body may need to have keys 'settingName: value' and settings var can be used to fill in the rest
-    //need to define this from client end as well
-    //TODO also need to perform error checking/validation before blindly writing to file
-    if(body = JSON.parse(req.body)) {
-        writeToFile(body, settingsFilepath)
+
+    if(validateSettings(req.body)) {
+        writeToFile(settingsFilepath, JSON.stringify(req.body))
         .then(info => {
             //save settings in memory ONLY if file write was succesful to avoid discrepancy
-            settings = body;
+            settings = req.body;
             console.log("Successfully wrote settings to file.");
             res.status(200).json({ message: "Successfully saved settings." });
         }).catch(err => {
-            //if setings fail to be written to file, disregard them
+            //if settings fail to be written to file, disregard them
             console.log("Failed to write settings to file. Could not save settings.");
             console.log(err);
             res.status(500).json({ message: "Failed to write settings to file. Could not save settings." });
@@ -180,7 +177,6 @@ app.put('/user-settings', function(req, res) {
         console.log("Failed to save settings. Received data was malformed.");
         res.status(500).json({ message: "Failed to save settings. Received data was malformed."});
     }
-    res.status(500).json({ message: "Endpoint currently disabled."});
 });
 
 /**
@@ -261,6 +257,28 @@ function methodNotSupportedHandler(res, supportedMethods) {
     //add header
     res.set({ 'Allow': supportedMethods });
     res.status(405).json({ message: "Method not supported." });
+}
+
+/**
+ * Check whether the settings object has all the required properties
+ * @param {*} newSettings 
+ */
+function validateSettings(newSettings) {
+    //dirty way of doing it, should use a class or compare
+    //to current settings object
+    console.log('Received body:');
+    console.log(newSettings);
+    if(!newSettings.alarms) return false;
+    if(!newSettings.dataCollectionParams.collectTemperature) return false;
+    if(!newSettings.dataCollectionParams.collectHumidity) return false;
+    if(!newSettings.dataCollectionParams.sensorPollingRate) return false;
+    if(!newSettings.dataCollectionParams.sendFrequency) return false;
+    if(!newSettings.reportParams) return false;
+    if(!newSettings.reportParams.showTemperature) return false;
+    if(!newSettings.reportParams.showHumidity) return false;
+    if(!newSettings.reportParams.reportGenerationFrequency) return false;
+    if(!newSettings.userEmailAddress) return false;
+    return true;
 }
 
 //#endregion
@@ -470,9 +488,6 @@ function loadUserSettings(setting) {
             lastReport = 0;
             //schedule a job for report generation
             let when = toCronTime(settings.reportParams.reportGenerationFrequency);
-            console.log(toCronTime(59));
-            console.log(toCronTime(60));
-            console.log(toCronTime(61));
             report = schedule.scheduleJob(when, function() {
                 //get data between now and last report send
                 readFile(dbFilepath)
@@ -794,6 +809,7 @@ function max(data, prop) {
  * @param {number} max 
  * @param {number} min 
  * @param {string} prop string of 'temperature' or 'humidity'
+ * @returns {boolean}
  */
 function isAcceptableDifference(max, min, prop) {
     if(!prop || prop != 'temperature' || prop != 'humidity' || !min || !max) {
@@ -806,7 +822,7 @@ function isAcceptableDifference(max, min, prop) {
         } else return true;
     }
     if(prop == 'humidity') {
-        if((max-min) > ALLOWABLE_HUMDITY_VARIATION) {
+        if((max-min) > ALLOWABLE_HUMIDITY_VARIATION) {
             return false;
         } else return true;
     }
@@ -822,6 +838,7 @@ function updateReportSettings(reportSettings, propertyChanged) {
     } 
     // else if(propertyChanged == 'reportGenerationFrequency') {
     // }
+    //TODO parse strings to ints here?
 }
 
 //#endregion
