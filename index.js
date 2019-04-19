@@ -6,6 +6,7 @@ var nodemailer = require('nodemailer');
 var schedule = require('node-schedule');
 var bodyParser = require('body-parser');
 var cors = require('cors');
+const { Duration } = require("luxon");
 
 //file paths
 const dbFilepath = './savedata/database.csv';
@@ -162,23 +163,23 @@ app.put('/user-settings', function(req, res) {
     //body may need to have keys 'settingName: value' and settings var can be used to fill in the rest
     //need to define this from client end as well
     //TODO also need to perform error checking/validation before blindly writing to file
-    // if(body = JSON.parse(req.body)) {
-    //     writeToFile(body, settingsFilepath)
-    //     .then(info => {
-    //         //save settings in memory ONLY if file write was succesful to avoid discrepancy
-    //         settings = body;
-    //         console.log("Successfully wrote settings to file.");
-    //         res.status(200).json({ message: "Successfully saved settings." });
-    //     }).catch(err => {
-    //         //if setings fail to be written to file, disregard them
-    //         console.log("Failed to write settings to file. Could not save settings.");
-    //         console.log(err);
-    //         res.status(500).json({ message: "Failed to write settings to file. Could not save settings." });
-    //     });
-    // } else {
-    //      console.log("Failed to save settings. Received data was malformed.");
-    //      res.status(500).json({ message: "Failed to save settings. Received data was malformed."});
-    // }
+    if(body = JSON.parse(req.body)) {
+        writeToFile(body, settingsFilepath)
+        .then(info => {
+            //save settings in memory ONLY if file write was succesful to avoid discrepancy
+            settings = body;
+            console.log("Successfully wrote settings to file.");
+            res.status(200).json({ message: "Successfully saved settings." });
+        }).catch(err => {
+            //if setings fail to be written to file, disregard them
+            console.log("Failed to write settings to file. Could not save settings.");
+            console.log(err);
+            res.status(500).json({ message: "Failed to write settings to file. Could not save settings." });
+        });
+    } else {
+        console.log("Failed to save settings. Received data was malformed.");
+        res.status(500).json({ message: "Failed to save settings. Received data was malformed."});
+    }
     res.status(500).json({ message: "Endpoint currently disabled."});
 });
 
@@ -468,7 +469,10 @@ function loadUserSettings(setting) {
     
             lastReport = 0;
             //schedule a job for report generation
-            let when = toCronTime(settings.reportParams.reportGenerationFrequency)
+            let when = toCronTime(settings.reportParams.reportGenerationFrequency);
+            console.log(toCronTime(59));
+            console.log(toCronTime(60));
+            console.log(toCronTime(61));
             report = schedule.scheduleJob(when, function() {
                 //get data between now and last report send
                 readFile(dbFilepath)
@@ -476,10 +480,23 @@ function loadUserSettings(setting) {
                     data = getDataBetween(data, lastReport, Date.now());
                     lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
                     //generate report and send it
-                    if(generateReport())
+                    if(content = generateReport()) {
                         console.log("Report successfully generated.");
+
+                        //generate email html and send it
+                        subject = "Wine cellar report";
+                        readFile('html/report.html')
+                        .then(data => {
+                            sendEmail(subject, data, content);
+                        })
+                        .catch(err => {
+                            //do nothing
+                            //could save report or display to console?
+                        });
+                    }
                     else
                         console.log("Failed to generate report.");
+                        
                 }).catch(err => {
                     console.error(err);
                 });
@@ -495,6 +512,7 @@ function loadUserSettings(setting) {
                 // //exit server
                 // server.close();
             // }
+            console.log(err);
             console.log("Couldn't read user-settings file. Shutting server down...");
             //exit server
             server.close();
@@ -503,24 +521,34 @@ function loadUserSettings(setting) {
 
 /**
  * Convert a time in human readable format to cron format
- * @param {string} time time in human-readable format
+ * @param {string} time time in human-readable format, in minutes or 'annually' | 'monthly' | 'weekly' | 'daily'
  * @returns {string} time in cron format
  */
 function toCronTime(time) {
-    let cronTime;
-    if(time === 'monthly') cronTime = '0 12 1 */1 *'; //every month on the first at 12:00pm
-    if(time === 'weekly') cronTime = '0 12 * * 1'; //every monday at 12:00pm
-    //convert time to time format used by scheduler (cron)
-    //every == /
-    //if(time.contains("every"))
-    //otherwise, run at this exact time (not that useful in this case?)
-    //minute == first star, day == second star, month == third star
-    //if no time specified
-        //use 12pm i.e. 0 12 * * *
-    //or use rules
-    //var rule = new schedule.RecurrenceRule();
-    //rule.minute = 42;
-    return cronTime;
+    //cron uses 0-59 for minute, 0-23 for hour, 1-31 for day of month, 1-12 for month,
+    //0-7 for day of week
+    if(time === 'annually') return '0 12 1 1 *'; //every year on the first of Jan at 12:00pm
+    if(time === 'monthly') return '0 12 1 */1 *'; //every month on the first at 12:00pm
+    if(time === 'weekly') return '0 12 * * 1'; //every monday at 12:00pm
+    if(time === 'daily') return '0 12 */1 * *'; //everyday at 12:00pm
+
+    //else handle numerical time
+    time = parseInt(time);
+    if(isNaN(time))
+        //return default schedule of daily
+        return '0 12 */1 * *';
+
+
+    //convert time to milli seconds
+    time *= 1000;
+    //convert from milliseconds to minutes, days etc.
+    timems = Duration.fromMillis(time).shiftTo('months', 'days', 'minutes', 'seconds', 'milliseconds');
+    console.log(timems.values);
+    let minutes, hours, days;
+    if(timems.minutes > 0) minutes = timems.minutes; else minutes = '*';
+    if(timems.hours > 0) hours = timems.hours; else hours = '*';
+    if(timems.days > 0) days = timems.days; else days = '*';
+    return String(minutes + ' ' + hours + ' ' + days + ' * *');
 }
 
 /**
@@ -664,19 +692,19 @@ function sendEmail(subject, html, content) {
                 if (error) {
                     console.log("Failed to send email.");
                     console.log(error);
-                    //inform caller so they can inform the user
+                    //inform caller
                     reject(error);
                 } else {
                     console.log('Email successfully sent.');
                     console.log(info.response);
-                    //inform caller so they can inform the user
+                    //inform caller
                     resolve(info);
                 }
             });
         }).catch((err) => {
             console.log('Failed to read settings file. Could not get email address of recipient.');
             console.log(err);
-            //inform caller so they can inform the user
+            //inform callerr
             reject(err);
         });
     });
@@ -700,7 +728,7 @@ function createTransporter() {
 //#region *** Report generation functions ***
 
 /**
- * TODO Generate report and send it
+ * Generate report and send it
  * @param {} data array of objects with 
  */
 function generateReport(data) {
@@ -723,14 +751,8 @@ function generateReport(data) {
         //print isn't acceptable
     }
 
-    subject = "Wine cellar report";
-    content = '';
-
-    //generate email html and send it
-    readFile('html/report.html')
-    .then(data => {
-        sendEmail(subject, data, content);
-    });
+    let report;
+    return report;
 }
 
 /**
@@ -796,7 +818,7 @@ function isAcceptableDifference(max, min, prop) {
 function updateReportSettings(reportSettings, propertyChanged) {
     if(propertyChanged == 'reportGenerationFrequency') {
         //change report frequency
-        report.reschedule(toCrontTime(reportSettings.reportGenerationFrequency));
+        report.reschedule(toCronTime(reportSettings.reportGenerationFrequency));
     } 
     // else if(propertyChanged == 'reportGenerationFrequency') {
     // }

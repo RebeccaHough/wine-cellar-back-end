@@ -16,12 +16,13 @@
     "dataCollectionParams": {
         "collectTemperature": true,
         "collectHumidity": true,
-        "sensorpollingRate": 30
+        "sensorPollingRate": 60,
+        "sendFrequency": 1200
     },
     "reportParams": {
         "showTemperature": true,
         "showHumidity": true,
-        "reportGenerationFrequency": "X days"
+        "reportGenerationFrequency": "monthly"
     },
     "userEmailAddress": "rt016631@reading.ac.uk"
 }
