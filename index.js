@@ -91,7 +91,7 @@ app.post('/database', function(req, res) {
         //convert JS object to JSON string
         body = JSON.stringify(body);
         //save new data to database
-        appendToFile(dbFilepath, body)
+        appendToDatabase(body)
         .then(info => {
             console.log("Successfully wrote data to database file.");
             res.status(200).json({ message: "Successfully wrote data to database file."});
@@ -348,6 +348,27 @@ function appendToFile(filepath, content) {
 }
 
 /**
+ * Append a JS array to the JSON database
+ * @param {*} to_append array of JS objects to append to JSON in db
+ */
+function appendToDatabase(to_append) {
+    return new Promise(function(resolve, reject) { 
+        //read database file
+        readFile(dbFilepath)
+        .then(data => {
+            console.log(typeof data);
+            //parse JSON into javascript array of objects
+            data = JSON.parse(data);
+            //do append
+            data = data.concat(to_append)
+            //return JSON array
+            resolve(JSON.stringify(data));
+        })
+        .catch(err => reject(err));
+    });
+}
+
+/**
  * Check the data receievd from the Pi is well-formed and valid.
  * 
  * The data is well-formed if it is an array of arrays that contain exactly 3 'number' objects, and the humidity attribute is a number between 0 and 100.
@@ -357,17 +378,29 @@ function appendToFile(filepath, content) {
  */
 function validatePiData(data) {
     //use try/catch in case the data is malformed
+    //console.log(data)
     try {
-        for(let object in data) {
+        for(let object of data) {
             if(!(
-                object.length == 3
-                && (object.time).instanceof(number) //unix timestamp
-                && (object.temperature).instanceof(number) //temperature
-                && (object.humidity).instanceof(number) //relative humidity percentage
-                && (object.humidity) >= 0
-                && (object.humidity) <= 100
+                object.time
+                && object.temperature
+                && object.humidity
             )) {
-                console.log("Pi data failed the validation check.");
+                console.log("Pi data failed the validation check, not all required attributes exist for all objects.");
+                return false;
+            }
+            if(!(typeof object.time == 'number' //unix timestamp
+                && typeof object.temperature == 'number' //temperature
+                && typeof object.humidity == 'number' //relative humidity percentage
+            )) {
+                console.log("Pi data failed the validation check, not all attributes have the correct type for all objects.");
+                return false;
+            }
+            if(!(
+                object.humidity >= 0
+                && object.humidity <= 100
+            )) {
+                console.log("Pi data failed the validation check, humidity range invalid.");
                 return false;
             }
         }

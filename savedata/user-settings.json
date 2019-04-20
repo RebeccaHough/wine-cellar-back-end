@@ -25,7 +25,8 @@
         "collectTemperature":true,
         "collectHumidity":true,
         "sensorPollingRate":60,
-        "sendFrequency":1200},
+        "sendFrequency":1200
+    },
         "reportParams": {
             "showTemperature":true,
             "showHumidity":true,
