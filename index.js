@@ -9,7 +9,7 @@ var cors = require('cors');
 const { Duration } = require("luxon");
 
 //file paths
-const dbFilepath = './savedata/database.csv';
+const dbFilepath = './savedata/database.json';
 const settingsFilepath = './savedata/user-settings.json';
 
 //for email alerter/nodemailer
@@ -41,9 +41,9 @@ let endpoints = [
 /** Reference to http.Server, set with app.listen() */
 let server;
 /** Time data was last checked for alarm */
-let lastChecked;
+let lastChecked = 0;
 /** Time last report was generated */
-let lastReport;
+let lastReport = 0;
 
 //to only allow one origin access, use the following in app.use('/endpoint', cors(corsOptions) ...)
 // var corsOptions = {
@@ -88,8 +88,8 @@ app.post('/database', function(req, res) {
     let body = req.body;
     //if req.body is in expected format
     if(validatePiData(body)) {
-        //convert to CSV format
-        body = jsToCSV(body);
+        //convert JS object to JSON string
+        body = JSON.stringify(body);
         //save new data to database
         appendToFile(dbFilepath, body)
         .then(info => {
@@ -553,12 +553,11 @@ function toCronTime(time) {
         //return default schedule of daily
         return '0 12 */1 * *';
 
-
     //convert time to milli seconds
     time *= 1000;
     //convert from milliseconds to minutes, days etc.
     timems = Duration.fromMillis(time).shiftTo('months', 'days', 'minutes', 'seconds', 'milliseconds');
-    console.log(timems.values);
+
     let minutes, hours, days;
     if(timems.minutes > 0) minutes = timems.minutes; else minutes = '*';
     if(timems.hours > 0) hours = timems.hours; else hours = '*';
@@ -631,20 +630,24 @@ function checkAlarm(alarm) {
     readFile(dbFilepath)
     .then(data => {
         conditionMet = false;
-        //TODO parse data back into a Javascript object
-        data = CSVToJS(data);
+        //parse json into a Javascript object
+        data = JSON.parse(data);
 
         //check data against alarm condition
         for(line in data) {
             //TODO only check if most recent database entires violate condition
             if(line.time > lastChecked) {
-                if(eval(alarm.condition) (line))
+                //construct condition check
+                let check = line[alarm.condition.variable] + alarm.condition.condition + alarm.condition.value;
+                //console.log(check);
+                if(eval(check))
                     conditionMet = true;
+                    break;
             }
         }
 
-        //TODO set last checked to now
-        //lastChecked = now.toUNIXtimestamp();
+        //set last checked to now (UNIX timestamp in seconds)
+        lastChecked = Math.floor(Date.now() / 1000);
 
         //if so, send email
         //if not, do nothing
@@ -661,9 +664,6 @@ function checkAlarm(alarm) {
                 console.log("Email alerts for " + alarm.name + " are not turned on. No email will be sent");
             }
         }
-        
-        //TODO store last line read, to know where to start checking entries from next time
-
     }).catch(err => {
         console.log("Encountered error while attempting to check database for alarm " + alarm.name + ".");
         console.log(err); //TODO
