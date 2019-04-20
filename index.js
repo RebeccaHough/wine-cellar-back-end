@@ -655,7 +655,9 @@ function checkAlarm(alarm) {
             console.log("Alarm " + alarm.name + " condition met.");
             if(alarm.isSubscribedTo) {
                 subject = "Alarm " + alarm.name + " from wine-cellar-back-end";
-                content = "Condition " + alarm.condition + " met. Please take action to correct the wine cellar's environment.";
+                content = "Condition " + alarm.condition.variable + " " +
+                alarm.condition.condition + " " + alarm.condition.value + 
+                " met. Please take action to correct the wine cellar's environment.";
                 readFile('alert-email.html')
                 .then(data => {
                     sendEmail(subject, data, content);
