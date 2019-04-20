@@ -7,7 +7,7 @@
                 "condition": "<",
                 "value": 11
             },
-            "isSubscribedTo":false,
+            "isSubscribedTo": true,
             "checkFrequency":"60"
         },
         {
@@ -17,7 +17,7 @@
                 "condition": ">",
                 "value": 20
             },
-            "isSubscribedTo":false,
+            "isSubscribedTo": true,
             "checkFrequency":"120"
         }
     ],
@@ -27,10 +27,10 @@
         "sensorPollingRate":60,
         "sendFrequency":1200
     },
-        "reportParams": {
-            "showTemperature":true,
-            "showHumidity":true,
-            "reportGenerationFrequency":"weekly"
+    "reportParams": {
+        "showTemperature":true,
+        "showHumidity":true,
+        "reportGenerationFrequency":"weekly"
     },
     "userEmailAddress":"amethystgreen96@gmail.com"
 }

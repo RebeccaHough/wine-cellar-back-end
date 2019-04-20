@@ -3,10 +3,8 @@ var express = require('express');
 var app = express();
 var fs = require('fs');
 var nodemailer = require('nodemailer');
-var schedule = require('node-schedule');
 var bodyParser = require('body-parser');
 var cors = require('cors');
-const { Duration } = require("luxon");
 
 //file paths
 const dbFilepath = './savedata/database.json';
@@ -20,9 +18,9 @@ const serverEmailService = 'gmail';
 
 /** Settings loaded from user-settings.json */
 let settings;
-/** Array to hold all scheduled jobs for alarm checking */
-let alarms;
-/** Object to hold scheduled job for report generation*/
+/** Array to hold all references to scheduled jobs for alarm checking with alarm name and schedule reference*/
+let alarms = [];
+/** Object to hold reference to scheduled job for report generation*/
 let report;
 
 //for report statistics generation
@@ -162,7 +160,7 @@ app.put('/user-settings', function(req, res) {
         writeToFile(settingsFilepath, JSON.stringify(req.body))
         .then(info => {
             //save settings in memory ONLY if file write was succesful to avoid discrepancy
-            settings = req.body;
+            updateSettings(req.body)
             console.log("Successfully wrote settings to file.");
             res.status(200).json({ message: "Successfully saved settings." });
         }).catch(err => {
@@ -277,6 +275,22 @@ function validateSettings(newSettings) {
     if(!newSettings.reportParams.reportGenerationFrequency) return false;
     if(!newSettings.userEmailAddress) return false;
     return true;
+}
+
+/**
+ * Update the settings stored in memory and reschedule tasks if necessary
+ * @param {*} newSettings 
+ */
+function updateSettings(newSettings) {
+    for(obj of newSettings) {
+        //TODO properly
+        if(!obj in settings) {
+            // updateAlarm();
+            // updateReportSettings();
+        }
+    }
+    //after all rescheduling etc. is done, save settings
+    settings = newSettings;
 }
 
 //#endregion
@@ -524,35 +538,8 @@ function loadUserSettings(setting) {
     
             lastReport = 0;
             //schedule a job for report generation
-            let when = toCronTime(settings.reportParams.reportGenerationFrequency);
-            report = schedule.scheduleJob(when, function() {
-                //get data between now and last report send
-                readFile(dbFilepath)
-                .then(data => {
-                    data = getDataBetween(data, lastReport, Date.now());
-                    lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
-                    //generate report and send it
-                    if(content = generateReport()) {
-                        console.log("Report successfully generated.");
-
-                        //generate email html and send it
-                        subject = "Wine cellar report";
-                        readFile('html/report.html')
-                        .then(data => {
-                            sendEmail(subject, data, content);
-                        })
-                        .catch(err => {
-                            //do nothing
-                            //could save report or display to console?
-                        });
-                    }
-                    else
-                        console.log("Failed to generate report.");
-                        
-                }).catch(err => {
-                    console.error(err);
-                });
-            });
+            let when = toMilliseconds(settings.reportParams.reportGenerationFrequency);
+            report = setInterval(generateAndSendReport(), when);
 
         }).catch(err => {
             //TODO should retry
@@ -574,32 +561,22 @@ function loadUserSettings(setting) {
 /**
  * Convert a time in human readable format to cron format
  * @param {string} time time in human-readable format, in minutes or 'annually' | 'monthly' | 'weekly' | 'daily'
- * @returns {string} time in cron format
+ * @returns {number} time in ms
  */
-function toCronTime(time) {
-    //cron uses 0-59 for minute, 0-23 for hour, 1-31 for day of month, 1-12 for month,
-    //0-7 for day of week
-    if(time === 'annually') return '0 12 1 1 *'; //every year on the first of Jan at 12:00pm
-    if(time === 'monthly') return '0 12 1 */1 *'; //every month on the first at 12:00pm
-    if(time === 'weekly') return '0 12 * * 1'; //every monday at 12:00pm
-    if(time === 'daily') return '0 12 */1 * *'; //everyday at 12:00pm
+function toMilliseconds(time) {
+    if(time === 'annually') return 31536000000;
+    if(time === 'monthly') return 2592000000;
+    if(time === 'weekly') return 604800000;
+    if(time === 'daily') return 86400000;
 
     //else handle numerical time
     time = parseInt(time);
     if(isNaN(time))
         //return default schedule of daily
-        return '0 12 */1 * *';
+        return 86400000;
 
     //convert time to milli seconds
-    time *= 1000;
-    //convert from milliseconds to minutes, days etc.
-    timems = Duration.fromMillis(time).shiftTo('months', 'days', 'minutes', 'seconds', 'milliseconds');
-
-    let minutes, hours, days;
-    if(timems.minutes > 0) minutes = timems.minutes; else minutes = '*';
-    if(timems.hours > 0) hours = timems.hours; else hours = '*';
-    if(timems.days > 0) days = timems.days; else days = '*';
-    return String(minutes + ' ' + hours + ' ' + days + ' * *');
+    return time *= 1000;
 }
 
 /**
@@ -638,12 +615,14 @@ function getDataBetween(data, startTime, endTime) {
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
 function createAlarm(alarm) {
-    //pass the correct alarm to the function
-    let checkAlarmBind = checkAlarm.bind(null, alarm);
-    //set the callback function for this alarm check
-    let newAlarm = schedule.scheduleJob(alarm.checkFrequency, checkAlarmBind);
-    //store this alarm in global alarms array
-    alarms.push(newAlarm);
+    if(alarm.isSubscribedTo) {
+        //pass the correct alarm to the function
+        let checkAlarmBind = checkAlarm.bind(null, alarm);
+        //set the callback function for this alarm check
+        let newAlarm = setInterval(checkAlarmBind, toMilliseconds(alarm.checkFrequency));
+        //store this alarm in global alarms array
+        alarms.push({"name": alarm.name, "ref": newAlarm});
+    }
 }
 
 /**
@@ -651,10 +630,20 @@ function createAlarm(alarm) {
  * Must call upon settings change.
  */
 function updateAlarm(alarm, propertyChanged) {
-    //TODO if any alarm or report generation params are changed
-    //for(alarm in alarms)
-    //if(alarm == this alarm)
-    //alarm.reschedule(toTime(alarm.checkFrequency));
+    //VERY IMPORTANT what to do when alarm changes name
+
+    //change or setup alarm check frequency
+    if(propertyChanged == 'checkFrequency' || propertyChanged == 'isSubscribedTo' || propertyChanged == 'condition') {
+        //if alarm already exists
+        if((alarmIdx = getAlarmIndex(alarms, alarm))) {
+            //stop scheduled check
+            clearInterval(alarms[alarmIdx]);
+            //remove alarm from array
+            alarms = alarms.splice(getAlarmIndex, 1);
+        }
+        //setup new scheduled check
+        createAlarm(alarm);
+    }
 }
 
 /**
@@ -672,7 +661,7 @@ function checkAlarm(alarm) {
 
         //check data against alarm condition
         for(line in data) {
-            //TODO only check if most recent database entires violate condition
+            //only check if most recent database entires violate condition
             if(line.time > lastChecked) {
                 //construct condition check
                 let check = line[alarm.condition.variable] + alarm.condition.condition + alarm.condition.value;
@@ -707,6 +696,21 @@ function checkAlarm(alarm) {
         console.log("Encountered error while attempting to check database for alarm " + alarm.name + ".");
         console.log(err); //TODO
     });
+}
+
+/**
+ * Get index
+ * @param {*} alarms 
+ * @param {*} alarm 
+ * @returns null or the alarm's index
+ */
+function getAlarmIndex(alarms, alarm) {
+    for (let i = 0; i < alarms.length; i++) {
+        if (alarms[i].name == alarm.name) {
+            return i;
+        }
+    }
+    return null;
 }
 
 //#endregion
@@ -780,6 +784,35 @@ function createTransporter() {
 //#endregion
 
 //#region *** Report generation functions ***
+
+function generateAndSendReport() {
+    //get data between now and last report send
+    readFile(dbFilepath)
+    .then(data => {
+        data = getDataBetween(data, lastReport, Date.now());
+        lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
+        //generate report and send it
+        if(content = generateReport()) {
+            console.log("Report successfully generated.");
+
+            //generate email html and send it
+            subject = "Wine cellar report";
+            readFile('html/report.html')
+            .then(data => {
+                sendEmail(subject, data, content);
+            })
+            .catch(err => {
+                //TODO
+                console.log(err);
+            });
+        }
+        else
+            console.log("Failed to generate report.");
+            
+    }).catch(err => {
+        console.error(err);
+    });
+}
 
 /**
  * Generate report and send it
@@ -873,7 +906,8 @@ function isAcceptableDifference(max, min, prop) {
 function updateReportSettings(reportSettings, propertyChanged) {
     if(propertyChanged == 'reportGenerationFrequency') {
         //change report frequency
-        report.reschedule(toCronTime(reportSettings.reportGenerationFrequency));
+        clearInterval(report);
+        report = setInterval(generateAndSendReport, toMilliseconds(reportSettings.reportGenerationFrequency));
     } 
     // else if(propertyChanged == 'reportGenerationFrequency') {
     // }
