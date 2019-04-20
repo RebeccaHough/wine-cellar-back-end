@@ -88,8 +88,6 @@ app.post('/database', function(req, res) {
     let body = req.body;
     //if req.body is in expected format
     if(validatePiData(body)) {
-        //convert JS object to JSON string
-        body = JSON.stringify(body);
         //save new data to database
         appendToDatabase(body)
         .then(info => {
@@ -352,17 +350,22 @@ function appendToFile(filepath, content) {
  * @param {*} to_append array of JS objects to append to JSON in db
  */
 function appendToDatabase(to_append) {
+    console.log("Appending to database.");
     return new Promise(function(resolve, reject) { 
         //read database file
         readFile(dbFilepath)
         .then(data => {
-            console.log(typeof data);
             //parse JSON into javascript array of objects
             data = JSON.parse(data);
             //do append
             data = data.concat(to_append)
-            //return JSON array
-            resolve(JSON.stringify(data));
+            //write JSON array to file
+            writeToFile(dbFilepath, JSON.stringify(data))
+            .then(data => {
+                //return 
+                resolve();
+            })
+            .catch(err => reject(err));
         })
         .catch(err => reject(err));
     });
@@ -381,6 +384,7 @@ function validatePiData(data) {
     //console.log(data)
     try {
         for(let object of data) {
+            //console.log(object)
             if(!(
                 object.time
                 && object.temperature
