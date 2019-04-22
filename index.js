@@ -3,13 +3,11 @@ var express = require('express');
 var app = express();
 var fs = require('fs');
 var nodemailer = require('nodemailer');
-var schedule = require('node-schedule');
 var bodyParser = require('body-parser');
 var cors = require('cors');
-const { Duration } = require("luxon");
 
 //file paths
-const dbFilepath = './savedata/database.csv';
+const dbFilepath = './savedata/database.json';
 const settingsFilepath = './savedata/user-settings.json';
 
 //for email alerter/nodemailer
@@ -20,9 +18,9 @@ const serverEmailService = 'gmail';
 
 /** Settings loaded from user-settings.json */
 let settings;
-/** Array to hold all scheduled jobs for alarm checking */
-let alarms;
-/** Object to hold scheduled job for report generation*/
+/** Array to hold all references to scheduled jobs for alarm checking with alarm name and schedule reference*/
+let alarms = [];
+/** Object to hold reference to scheduled job for report generation*/
 let report;
 
 //for report statistics generation
@@ -41,9 +39,9 @@ let endpoints = [
 /** Reference to http.Server, set with app.listen() */
 let server;
 /** Time data was last checked for alarm */
-let lastChecked;
+let lastChecked = 0;
 /** Time last report was generated */
-let lastReport;
+let lastReport = 0;
 
 //to only allow one origin access, use the following in app.use('/endpoint', cors(corsOptions) ...)
 // var corsOptions = {
@@ -88,10 +86,8 @@ app.post('/database', function(req, res) {
     let body = req.body;
     //if req.body is in expected format
     if(validatePiData(body)) {
-        //convert to CSV format
-        body = jsToCSV(body);
         //save new data to database
-        appendToFile(dbFilepath, body)
+        appendToDatabase(body)
         .then(info => {
             console.log("Successfully wrote data to database file.");
             res.status(200).json({ message: "Successfully wrote data to database file."});
@@ -159,19 +155,16 @@ app.get('/user-settings', function(req, res) {
  */ 
 app.put('/user-settings', function(req, res) {
     console.log('Received PUT request on endpoint \'/user-settings\'.');
-    //TODO IMPORTANT handle just changing one setting or all of them
-    //body may need to have keys 'settingName: value' and settings var can be used to fill in the rest
-    //need to define this from client end as well
-    //TODO also need to perform error checking/validation before blindly writing to file
-    if(body = JSON.parse(req.body)) {
-        writeToFile(body, settingsFilepath)
+
+    if(validateSettings(req.body)) {
+        writeToFile(settingsFilepath, JSON.stringify(req.body))
         .then(info => {
             //save settings in memory ONLY if file write was succesful to avoid discrepancy
-            settings = body;
+            updateSettings(req.body)
             console.log("Successfully wrote settings to file.");
             res.status(200).json({ message: "Successfully saved settings." });
         }).catch(err => {
-            //if setings fail to be written to file, disregard them
+            //if settings fail to be written to file, disregard them
             console.log("Failed to write settings to file. Could not save settings.");
             console.log(err);
             res.status(500).json({ message: "Failed to write settings to file. Could not save settings." });
@@ -262,6 +255,44 @@ function methodNotSupportedHandler(res, supportedMethods) {
     res.status(405).json({ message: "Method not supported." });
 }
 
+/**
+ * Check whether the settings object has all the required properties
+ * @param {*} newSettings 
+ */
+function validateSettings(newSettings) {
+    //dirty way of doing it, should use a class or compare
+    //to current settings object
+    console.log('Received body:');
+    console.log(newSettings);
+    if(!newSettings.alarms) return false;
+    if(!newSettings.dataCollectionParams.collectTemperature) return false;
+    if(!newSettings.dataCollectionParams.collectHumidity) return false;
+    if(!newSettings.dataCollectionParams.sensorPollingRate) return false;
+    if(!newSettings.dataCollectionParams.sendFrequency) return false;
+    if(!newSettings.reportParams) return false;
+    if(!newSettings.reportParams.showTemperature) return false;
+    if(!newSettings.reportParams.showHumidity) return false;
+    if(!newSettings.reportParams.reportGenerationFrequency) return false;
+    if(!newSettings.userEmailAddress) return false;
+    return true;
+}
+
+/**
+ * Update the settings stored in memory and reschedule tasks if necessary
+ * @param {*} newSettings 
+ */
+function updateSettings(newSettings) {
+    for(obj of newSettings) {
+        //TODO properly
+        if(!obj in settings) {
+            // updateAlarm();
+            // updateReportSettings();
+        }
+    }
+    //after all rescheduling etc. is done, save settings
+    settings = newSettings;
+}
+
 //#endregion
 
 //#region *** File functions ***
@@ -329,6 +360,32 @@ function appendToFile(filepath, content) {
 }
 
 /**
+ * Append a JS array to the JSON database
+ * @param {*} to_append array of JS objects to append to JSON in db
+ */
+function appendToDatabase(to_append) {
+    console.log("Appending to database.");
+    return new Promise(function(resolve, reject) { 
+        //read database file
+        readFile(dbFilepath)
+        .then(data => {
+            //parse JSON into javascript array of objects
+            data = JSON.parse(data);
+            //do append
+            data = data.concat(to_append)
+            //write JSON array to file
+            writeToFile(dbFilepath, JSON.stringify(data))
+            .then(data => {
+                //return 
+                resolve();
+            })
+            .catch(err => reject(err));
+        })
+        .catch(err => reject(err));
+    });
+}
+
+/**
  * Check the data receievd from the Pi is well-formed and valid.
  * 
  * The data is well-formed if it is an array of arrays that contain exactly 3 'number' objects, and the humidity attribute is a number between 0 and 100.
@@ -338,17 +395,30 @@ function appendToFile(filepath, content) {
  */
 function validatePiData(data) {
     //use try/catch in case the data is malformed
+    //console.log(data)
     try {
-        for(let object in data) {
+        for(let object of data) {
+            //console.log(object)
             if(!(
-                object.length == 3
-                && (object.time).instanceof(number) //unix timestamp
-                && (object.temperature).instanceof(number) //temperature
-                && (object.humidity).instanceof(number) //relative humidity percentage
-                && (object.humidity) >= 0
-                && (object.humidity) <= 100
+                object.time
+                && object.temperature
+                && object.humidity
             )) {
-                console.log("Pi data failed the validation check.");
+                console.log("Pi data failed the validation check, not all required attributes exist for all objects.");
+                return false;
+            }
+            if(!(typeof object.time == 'number' //unix timestamp
+                && typeof object.temperature == 'number' //temperature
+                && typeof object.humidity == 'number' //relative humidity percentage
+            )) {
+                console.log("Pi data failed the validation check, not all attributes have the correct type for all objects.");
+                return false;
+            }
+            if(!(
+                object.humidity >= 0
+                && object.humidity <= 100
+            )) {
+                console.log("Pi data failed the validation check, humidity range invalid.");
                 return false;
             }
         }
@@ -468,38 +538,8 @@ function loadUserSettings(setting) {
     
             lastReport = 0;
             //schedule a job for report generation
-            let when = toCronTime(settings.reportParams.reportGenerationFrequency);
-            console.log(toCronTime(59));
-            console.log(toCronTime(60));
-            console.log(toCronTime(61));
-            report = schedule.scheduleJob(when, function() {
-                //get data between now and last report send
-                readFile(dbFilepath)
-                .then(data => {
-                    data = getDataBetween(data, lastReport, Date.now());
-                    lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
-                    //generate report and send it
-                    if(content = generateReport()) {
-                        console.log("Report successfully generated.");
-
-                        //generate email html and send it
-                        subject = "Wine cellar report";
-                        readFile('html/report.html')
-                        .then(data => {
-                            sendEmail(subject, data, content);
-                        })
-                        .catch(err => {
-                            //do nothing
-                            //could save report or display to console?
-                        });
-                    }
-                    else
-                        console.log("Failed to generate report.");
-                        
-                }).catch(err => {
-                    console.error(err);
-                });
-            });
+            let when = toMilliseconds(settings.reportParams.reportGenerationFrequency);
+            report = setInterval(generateAndSendReport(), when);
 
         }).catch(err => {
             //TODO should retry
@@ -521,33 +561,22 @@ function loadUserSettings(setting) {
 /**
  * Convert a time in human readable format to cron format
  * @param {string} time time in human-readable format, in minutes or 'annually' | 'monthly' | 'weekly' | 'daily'
- * @returns {string} time in cron format
+ * @returns {number} time in ms
  */
-function toCronTime(time) {
-    //cron uses 0-59 for minute, 0-23 for hour, 1-31 for day of month, 1-12 for month,
-    //0-7 for day of week
-    if(time === 'annually') return '0 12 1 1 *'; //every year on the first of Jan at 12:00pm
-    if(time === 'monthly') return '0 12 1 */1 *'; //every month on the first at 12:00pm
-    if(time === 'weekly') return '0 12 * * 1'; //every monday at 12:00pm
-    if(time === 'daily') return '0 12 */1 * *'; //everyday at 12:00pm
+function toMilliseconds(time) {
+    if(time === 'annually') return 31536000000;
+    if(time === 'monthly') return 2592000000;
+    if(time === 'weekly') return 604800000;
+    if(time === 'daily') return 86400000;
 
     //else handle numerical time
     time = parseInt(time);
     if(isNaN(time))
         //return default schedule of daily
-        return '0 12 */1 * *';
-
+        return 86400000;
 
     //convert time to milli seconds
-    time *= 1000;
-    //convert from milliseconds to minutes, days etc.
-    timems = Duration.fromMillis(time).shiftTo('months', 'days', 'minutes', 'seconds', 'milliseconds');
-    console.log(timems.values);
-    let minutes, hours, days;
-    if(timems.minutes > 0) minutes = timems.minutes; else minutes = '*';
-    if(timems.hours > 0) hours = timems.hours; else hours = '*';
-    if(timems.days > 0) days = timems.days; else days = '*';
-    return String(minutes + ' ' + hours + ' ' + days + ' * *');
+    return time *= 1000;
 }
 
 /**
@@ -586,12 +615,14 @@ function getDataBetween(data, startTime, endTime) {
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
 function createAlarm(alarm) {
-    //pass the correct alarm to the function
-    let checkAlarmBind = checkAlarm.bind(null, alarm);
-    //set the callback function for this alarm check
-    let newAlarm = schedule.scheduleJob(alarm.checkFrequency, checkAlarmBind);
-    //store this alarm in global alarms array
-    alarms.push(newAlarm);
+    if(alarm.isSubscribedTo) {
+        //pass the correct alarm to the function
+        let checkAlarmBind = checkAlarm.bind(null, alarm);
+        //set the callback function for this alarm check
+        let newAlarm = setInterval(checkAlarmBind, toMilliseconds(alarm.checkFrequency));
+        //store this alarm in global alarms array
+        alarms.push({"name": alarm.name, "ref": newAlarm});
+    }
 }
 
 /**
@@ -599,10 +630,20 @@ function createAlarm(alarm) {
  * Must call upon settings change.
  */
 function updateAlarm(alarm, propertyChanged) {
-    //TODO if any alarm or report generation params are changed
-    //for(alarm in alarms)
-    //if(alarm == this alarm)
-    //alarm.reschedule(toTime(alarm.checkFrequency));
+    //VERY IMPORTANT what to do when alarm changes name
+
+    //change or setup alarm check frequency
+    if(propertyChanged == 'checkFrequency' || propertyChanged == 'isSubscribedTo' || propertyChanged == 'condition') {
+        //if alarm already exists
+        if((alarmIdx = getAlarmIndex(alarms, alarm))) {
+            //stop scheduled check
+            clearInterval(alarms[alarmIdx]);
+            //remove alarm from array
+            alarms = alarms.splice(getAlarmIndex, 1);
+        }
+        //setup new scheduled check
+        createAlarm(alarm);
+    }
 }
 
 /**
@@ -615,20 +656,24 @@ function checkAlarm(alarm) {
     readFile(dbFilepath)
     .then(data => {
         conditionMet = false;
-        //TODO parse data back into a Javascript object
-        data = CSVToJS(data);
+        //parse json into a Javascript object
+        data = JSON.parse(data);
 
         //check data against alarm condition
         for(line in data) {
-            //TODO only check if most recent database entires violate condition
+            //only check if most recent database entires violate condition
             if(line.time > lastChecked) {
-                if(eval(alarm.condition) (line))
+                //construct condition check
+                let check = line[alarm.condition.variable] + alarm.condition.condition + alarm.condition.value;
+                //console.log(check);
+                if(eval(check))
                     conditionMet = true;
+                    break;
             }
         }
 
-        //TODO set last checked to now
-        //lastChecked = now.toUNIXtimestamp();
+        //set last checked to now (UNIX timestamp in seconds)
+        lastChecked = Math.floor(Date.now() / 1000);
 
         //if so, send email
         //if not, do nothing
@@ -636,7 +681,9 @@ function checkAlarm(alarm) {
             console.log("Alarm " + alarm.name + " condition met.");
             if(alarm.isSubscribedTo) {
                 subject = "Alarm " + alarm.name + " from wine-cellar-back-end";
-                content = "Condition " + alarm.condition + " met. Please take action to correct the wine cellar's environment.";
+                content = "Condition " + alarm.condition.variable + " " +
+                alarm.condition.condition + " " + alarm.condition.value + 
+                " met. Please take action to correct the wine cellar's environment.";
                 readFile('alert-email.html')
                 .then(data => {
                     sendEmail(subject, data, content);
@@ -645,13 +692,25 @@ function checkAlarm(alarm) {
                 console.log("Email alerts for " + alarm.name + " are not turned on. No email will be sent");
             }
         }
-        
-        //TODO store last line read, to know where to start checking entries from next time
-
     }).catch(err => {
         console.log("Encountered error while attempting to check database for alarm " + alarm.name + ".");
         console.log(err); //TODO
     });
+}
+
+/**
+ * Get index
+ * @param {*} alarms 
+ * @param {*} alarm 
+ * @returns null or the alarm's index
+ */
+function getAlarmIndex(alarms, alarm) {
+    for (let i = 0; i < alarms.length; i++) {
+        if (alarms[i].name == alarm.name) {
+            return i;
+        }
+    }
+    return null;
 }
 
 //#endregion
@@ -726,6 +785,35 @@ function createTransporter() {
 
 //#region *** Report generation functions ***
 
+function generateAndSendReport() {
+    //get data between now and last report send
+    readFile(dbFilepath)
+    .then(data => {
+        data = getDataBetween(data, lastReport, Date.now());
+        lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
+        //generate report and send it
+        if(content = generateReport()) {
+            console.log("Report successfully generated.");
+
+            //generate email html and send it
+            subject = "Wine cellar report";
+            readFile('html/report.html')
+            .then(data => {
+                sendEmail(subject, data, content);
+            })
+            .catch(err => {
+                //TODO
+                console.log(err);
+            });
+        }
+        else
+            console.log("Failed to generate report.");
+            
+    }).catch(err => {
+        console.error(err);
+    });
+}
+
 /**
  * Generate report and send it
  * @param {} data array of objects with 
@@ -793,6 +881,7 @@ function max(data, prop) {
  * @param {number} max 
  * @param {number} min 
  * @param {string} prop string of 'temperature' or 'humidity'
+ * @returns {boolean}
  */
 function isAcceptableDifference(max, min, prop) {
     if(!prop || prop != 'temperature' || prop != 'humidity' || !min || !max) {
@@ -805,7 +894,7 @@ function isAcceptableDifference(max, min, prop) {
         } else return true;
     }
     if(prop == 'humidity') {
-        if((max-min) > ALLOWABLE_HUMDITY_VARIATION) {
+        if((max-min) > ALLOWABLE_HUMIDITY_VARIATION) {
             return false;
         } else return true;
     }
@@ -817,10 +906,12 @@ function isAcceptableDifference(max, min, prop) {
 function updateReportSettings(reportSettings, propertyChanged) {
     if(propertyChanged == 'reportGenerationFrequency') {
         //change report frequency
-        report.reschedule(toCronTime(reportSettings.reportGenerationFrequency));
+        clearInterval(report);
+        report = setInterval(generateAndSendReport, toMilliseconds(reportSettings.reportGenerationFrequency));
     } 
     // else if(propertyChanged == 'reportGenerationFrequency') {
     // }
+    //TODO parse strings to ints here?
 }
 
 //#endregion

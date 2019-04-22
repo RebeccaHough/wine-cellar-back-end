@@ -1,28 +1,36 @@
 {
-    "alarms": [
+    "alarms":[
         {
-            "name": "Alarm 1",
-            "condition": "temperature < 11",
-            "isSubscribedTo": false,
-            "checkFrequency": "as needed"
+            "name":"Temp below 11",
+            "condition":{
+                "variable": "temperature",
+                "condition": "<",
+                "value": 11
+            },
+            "isSubscribedTo": true,
+            "checkFrequency":"60"
         },
         {
-            "name": "Alarm 2",
-            "condition": "",
-            "isSubscribedTo": false,
-            "checkFrequency": "every X days"
+            "name":"Temp above 20",
+            "condition":{
+                "variable": "temperature",
+                "condition": ">",
+                "value": 20
+            },
+            "isSubscribedTo": true,
+            "checkFrequency":"120"
         }
     ],
     "dataCollectionParams": {
-        "collectTemperature": true,
-        "collectHumidity": true,
-        "sensorPollingRate": 60,
-        "sendFrequency": 1200
+        "collectTemperature":true,
+        "collectHumidity":true,
+        "sensorPollingRate":60,
+        "sendFrequency":1200
     },
     "reportParams": {
-        "showTemperature": true,
-        "showHumidity": true,
-        "reportGenerationFrequency": "monthly"
+        "showTemperature":true,
+        "showHumidity":true,
+        "reportGenerationFrequency":"weekly"
     },
-    "userEmailAddress": "rt016631@reading.ac.uk"
+    "userEmailAddress":"amethystgreen96@gmail.com"
 }
