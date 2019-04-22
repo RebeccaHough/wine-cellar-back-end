@@ -102,7 +102,7 @@ app.post('/database', function(req, res) {
         });
     } else {
         console.log("Failed to append data to database file. Received data was malformed.");
-        res.status(500).json({ message: "Failed to append data to database file. Received data was malformed."});
+        res.status(422).json({ message: "Failed to append data to database file. Received data was malformed."});
     }
 });
 
@@ -178,9 +178,8 @@ app.put('/user-settings', function(req, res) {
         });
     } else {
         console.log("Failed to save settings. Received data was malformed.");
-        res.status(500).json({ message: "Failed to save settings. Received data was malformed."});
+        res.status(422).json({ message: "Failed to save settings. Received data was malformed."});
     }
-    res.status(500).json({ message: "Endpoint currently disabled."});
 });
 
 /**
