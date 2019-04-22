@@ -3,8 +3,11 @@ var express = require('express');
 var app = express();
 var fs = require('fs');
 var nodemailer = require('nodemailer');
+var inlineBase64 = require('nodemailer-plugin-inline-base64');
 var bodyParser = require('body-parser');
 var cors = require('cors');
+var Chart = require('chart.js');
+const { CanvasRenderService }  = require('chartjs-node-canvas');
 
 //file paths
 const dbFilepath = './savedata/database.json';
@@ -25,7 +28,7 @@ let report;
 
 //for report statistics generation
 const ALLOWABLE_TEMPERATURE_VARIATION = 5;
-const ALLOWABLE_HUMIDITY_VARIATION = 50;
+const ALLOWABLE_HUMIDITY_VARIATION = 8;
 
 /** List of valid endpoints, for use in invalid request responses */
 let endpoints = [
@@ -198,12 +201,11 @@ app.get('/email-me', function(req, res) {
 app.get('/send-report', function(req, res) {
     console.log('Received GET request on endpoint \'/send-report\'.');
     //send empty test email
-    sendEmail()
+    generateAndSendReport()
     .then(info => {
         res.status(200).json({ message:"Successfully sent report." });
     }).catch(err => {
         console.log("Failed to send report.");
-        console.log(err);
         res.status(500).json({ message:"Failed to send report." });
     });
 });
@@ -549,7 +551,7 @@ function loadUserSettings(setting) {
             lastReport = 0;
             //schedule a job for report generation
             let when = toMilliseconds(settings.reportParams.reportGenerationFrequency);
-            report = setInterval(generateAndSendReport(), when);
+            report = setInterval(generateAndSendReport, when);
 
         }).catch(err => {
             //TODO should retry
@@ -601,7 +603,7 @@ function toMilliseconds(time) {
 function getDataBetween(data, startTime, endTime) {
     if(!data) return; //TODO fail gracefully
     if(!startTime) startTime = 0; //00:00:00 UTC on 1 January 1970
-    if(!endTime) endTime = Date.now();
+    if(!endTime) endTime = Date.now() / 1000;
     if(!(startTime < endTime)) {
         //swap
         var temp = startTime;
@@ -610,10 +612,9 @@ function getDataBetween(data, startTime, endTime) {
     }
 
     let output = [];
-    //itterate backwards, to save time in the most common use-case of needing only the most recent data
-    for(let i = data.length - 1; i >= 0; i--) {
+    for(let i = 0; i < data.length; i++) {
         //for every time, if time is between startTime and endTime, store it, else ignore
-        if(data[i].time < startTime) break;
+        if(data[i].time < startTime) continue;
         if(data[i].time <= endTime) output.push(data[i]);
     }
     return output;
@@ -642,20 +643,21 @@ function rescheduleAlarm(alarm) {
     //if alarm already exists
     if((alarmIdx = getAlarmIndex(alarms, alarm))) {
         //stop scheduled check
-        clearInterval(alarms[alarmIdx]);
+        clearInterval(alarms[alarmIdx].ref);
         //remove alarm from array
-        alarms = alarms.splice(getAlarmIndex, 1);
+        alarms = alarms.splice(alarmIdx, 1);
     }
     //setup new scheduled check
     createAlarm(alarm);
 }
 
 /**
- * TODO Check whether the recent data entries in the database meet a certain condition and take action if they do.
+ * Check whether the recent data entries in the database meet a certain condition and take action if they do.
  * 
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
 function checkAlarm(alarm) {
+    console.log("Checking alarm: " + alarm.name);
     //read database
     readFile(dbFilepath)
     .then(data => {
@@ -690,7 +692,9 @@ function checkAlarm(alarm) {
                 " met. Please take action to correct the wine cellar's environment.";
                 readFile('alert-email.html')
                 .then(data => {
-                    sendEmail(subject, data, content);
+                    //TODO add content inside data (alarm html template)
+                    content = '<html lang="en"><body>'+ content +"</body></html>"
+                    sendEmail(subject, content);
                 });
             } else {
                 console.log("Email alerts for " + alarm.name + " are not turned on. No email will be sent");
@@ -724,16 +728,14 @@ function getAlarmIndex(alarms, alarm) {
 /**
  * Send an email alert.
  * TODO https://www.codementor.io/joshuaaroke/sending-html-message-in-nodejs-express-9i3d3uhjr
- * TODO above link uses email-templates to load emails
+ * Above link uses email-templates to load emails
  * 
  * @param {string} subject the optional email subject
  * @param {string} html the optional html string to send
- * @param {string} content optional content to add to the email's html
  */
-function sendEmail(subject, html, content) {
+function sendEmail(subject, html) {
     if(!subject) subject = 'Test email from wine-cellar-back-end';
     if(!html) html = '<p>This is a test email!</p>';
-    if(content) ; //TODO dynamically alter emails' html content
 
     return new Promise(function(resolve, reject) {
         loadUserSettings('userEmailAddress')
@@ -748,7 +750,10 @@ function sendEmail(subject, html, content) {
         
             //ensure nodemailer's transporter is available
             if(!transporter) createTransporter();
-        
+
+            // compile base64 images as an email attachment
+            transporter.use('compile', inlineBase64({cidPrefix: 'graph_'}));
+
             //send email
             transporter.sendMail(mailOptions, function(error, info){
                 if (error) {
@@ -791,59 +796,111 @@ function createTransporter() {
 
 function generateAndSendReport() {
     //get data between now and last report send
-    readFile(dbFilepath)
-    .then(data => {
-        data = getDataBetween(data, lastReport, Date.now());
-        lastReport = Date.now(); //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
-        //generate report and send it
-        if(content = generateReport()) {
-            console.log("Report successfully generated.");
+    return new Promise(function(resolve, reject) {
+        readFile(dbFilepath)
+        .then(data => {
+            data = JSON.parse(data);
+            data = getDataBetween(data, lastReport, Date.now() / 1000);
+            lastReport = Date.now() / 1000; //TODO may miss some results that occur in the execution time of getDataBetween (i.e. between now and previous call to now)
+            //generate report and send it
+            generateReport(data)
+            .then(content => {
+                console.log("Report successfully generated.");
 
-            //generate email html and send it
-            subject = "Wine cellar report";
-            readFile('html/report.html')
-            .then(data => {
-                sendEmail(subject, data, content);
+                //generate email html and send it
+                subject = "Wine cellar report";
+                readFile('html/report.html')
+                .then(data => {
+                    //TODO put content inside data (report html template)
+                    //TODO parse data from buffer to utf8 or json
+                    sendEmail(subject, content)
+                    .then(info => {
+                        resolve(info)
+                    })
+                    .catch(err => {
+                        //TODO
+                        console.log("Failed to generate report.");
+                        console.log(err);
+                        reject(err);
+                    });
+                })
+                .catch(err => {
+                    //TODO
+                    console.log("Failed to generate report.");
+                    console.log(err);
+                    reject(err);
+                });
             })
             .catch(err => {
-                //TODO
-                console.log(err);
-            });
-        }
-        else
+                console.log("Failed to generate report.");
+                reject(err);
+            });   
+        }).catch(err => {
             console.log("Failed to generate report.");
-            
-    }).catch(err => {
-        console.error(err);
+            console.error(err);
+            reject(err);
+        });
     });
 }
 
 /**
  * Generate report and send it
- * @param {} data array of objects with 
+ * @param {} data array of objects
  */
 function generateReport(data) {
+    return new Promise(function(resolve, reject) { 
+        //over n timespan
+        //generate graph
+        //charts.js .toBase64Image();
+        //https://www.chartjs.org/docs/latest/developers/api.html#tobase64image
+        //https://github.com/chartjs/Chart.js
 
-    //over n timespan
-    //generate graph
-    //charts.js .toBase64Image();
-    //https://www.chartjs.org/docs/latest/developers/api.html#tobase64image
-    //https://github.com/chartjs/Chart.js
+        //convert start and end date from unix timestamp to human-readable Date
+        let startDate = new Date(data[0].time * 1000);
+        let endDate = new Date(data[data.length - 1].time * 1000);
+        let timePeriod = startDate.toDateString() + " to " + endDate.toDateString(); 
 
-    //compute statitsics
-    minTemperature = min(data, 'temperature');
-    maxTemperature = max(data, 'temperature');
-    minHumidity = min(data, 'humidity');
-    maxHumidity = max(data, 'humidity');
-    if(!isAcceptableDifference(minTemperature, maxTemperature, 'temperature')) {
-        //print isn't acceptable
-    }
-    if(!isAcceptableDifference(minHumidity, maxHumidity, 'humidity')) {
-        //print isn't acceptable
-    }
+        let report = `
+            <html lang="en">
+                <body>
+                    <h1> Report for `+ timePeriod + `</h1>`;
 
-    let report;
-    return report;
+        //compute statistics
+        minTemperature = min(data, 'temperature');
+        report += `<p>Min temperature for this period: `+ minTemperature + `</p>`;
+        maxTemperature = max(data, 'temperature');
+        report += `<p>Min temperature for this period: `+ maxTemperature + `</p>`;
+
+        if(!isAcceptableDifference(minTemperature, maxTemperature, 'temperature')) {
+            //print isn't acceptable
+            report += `<p>This temperature variance is too high. 
+            Please take action to correct it in future.</p>`;
+        }
+
+        minHumidity = min(data, 'humidity');
+        report += `<p>Min humidity for this period: `+ minHumidity + `</p>`;
+        maxHumidity = max(data, 'humidity');
+        report += `<p>Max humidity for this period: `+ maxHumidity + `</p>`;
+
+        if(!isAcceptableDifference(minHumidity, maxHumidity, 'humidity')) {
+            //print isn't acceptable
+            report += `<p>This humidity variance is too high. 
+            Please take action to correct it in future.</p>`;
+        }
+
+        generateGraph(data)
+        .then(graph => {
+            //console.log(graph);
+            report += `<img src="` + graph + `"/>`;
+        
+            report += `
+                    </body>
+                </html>
+            `;
+            resolve(report);
+        })
+        .catch(err => reject(err));
+    });
 }
 
 /**
@@ -856,11 +913,11 @@ function min(data, prop) {
         console.log("Incorrect usage of min function.");
         return 0;
     }
-    min = 0;
+    minimum = data[0][prop];
     for(obj of data) {
-        if(obj[prop] < min) min = obj[prop];
+        if(obj[prop] < minimum) minimum = obj[prop];
     }
-    return min;
+    return minimum;
 }
 
 /**
@@ -873,23 +930,27 @@ function max(data, prop) {
         console.log("Incorrect usage of max function.");
         return 0;
     }
-    max = 0;
+    maximum = data[0][prop];
     for(obj of data) {
-        if(obj[prop] < max) max = obj[prop];
+        if(obj[prop] > maximum) maximum = obj[prop];
     }
-    return max;
+    return maximum;
 }
 
 /**
  * Determine if the difference between a max and min for either temperature is acceptable or not
+ * @param {number} min
  * @param {number} max 
- * @param {number} min 
  * @param {string} prop string of 'temperature' or 'humidity'
  * @returns {boolean}
  */
-function isAcceptableDifference(max, min, prop) {
-    if(!prop || prop != 'temperature' || prop != 'humidity' || !min || !max) {
-        console.log("Incorrect usage of isAcceptableDifference function.");
+function isAcceptableDifference(min, max, prop) {
+    if(!prop || !min || !max) {
+        console.log("Incorrect usage of isAcceptableDifference function. Please provide 3 parameters.");
+        return true;
+    }
+    if(prop != 'temperature' && prop != 'humidity') {
+        console.log("Incorrect usage of isAcceptableDifference function. Prop must be 'temperature' or 'humidity'.");
         return true;
     }
     if(prop == 'temperature') {
@@ -912,6 +973,75 @@ function rescheduleReport(reportParams) {
     clearInterval(report);
     //schedule updated report
     report = setInterval(generateAndSendReport, toMilliseconds(reportParams.reportGenerationFrequency));
+}
+
+/**
+ * Generate line graph f data and return it as a base64 image
+ * https://github.com/SeanSobey/ChartjsNodeCanvas
+ * https://github.com/SeanSobey/ChartjsNodeCanvas/blob/master/API.md
+ * @param {*} data 
+ */
+function generateGraph(data) {
+    return new Promise(function(resolve, reject) {
+        const width = 650; //px
+        const height = 400; //px
+
+        var timeLabels = data.map(function(e) {
+            return new Date(e.time * 1000);
+        });
+        var temperatureReadings = data.map(function(e) {
+            return e.temperature;
+        });
+        var humidityReadings = data.map(function(e) {
+            return e.humidity;
+        });
+
+        const configuration = {
+            type: 'line',
+            data: {
+                // labels is the time stamps (may be too many points)
+                labels: timeLabels,
+                // datasets contains temperature and humidity
+                // data1 is temp, data2 is hum
+                // label is "Temperature" and "Humidity"
+                datasets: [
+                    {
+                        label: 'Temperature',
+                        data: temperatureReadings,
+                        //borderColor: "rgba(255, 64, 129, 1)",
+                        //pointBackgroundColor: "rgba(255, 255, 255, 1)",
+                        backgroundColor: "rgba(63, 81, 181, 0.5)",
+                        fill: false,
+                    },
+                    {
+                        label: 'Humidity',
+                        data: humidityReadings,
+                        //borderColor: "rgba(255, 64, 129, 1)",
+                        //pointBackgroundColor: "rgba(0, 0, 0, 0.5)",
+                        backgroundColor: "rgba(244, 67, 54, 0.5)",
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                title: {
+                    display: true,
+                    text: 'Wine Cellar Readings'
+                },
+                scales: {
+                    xAxes: [{
+                        type: 'time'
+                    }]
+                }
+            }
+        };
+        const canvasRenderService = new CanvasRenderService(width, height, (Chart) => {});
+        canvasRenderService.renderToDataURL(configuration)
+        .then(output => {
+            resolve(output);
+        })
+        .catch(err => reject(err));
+    });
 }
 
 //#endregion
