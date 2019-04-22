@@ -544,7 +544,7 @@ function loadUserSettings(setting) {
             alarms = [];
 
             //for each alarm, schedule a job based on check frequency
-            for(alarm in settings.alarms) {
+            for(let alarm of settings.alarms) {
                 createAlarm(alarm);
             }
     
@@ -572,7 +572,7 @@ function loadUserSettings(setting) {
 
 /**
  * Convert a time in human readable format to cron format
- * @param {string} time time in human-readable format, in minutes or 'annually' | 'monthly' | 'weekly' | 'daily'
+ * @param {string} time time in human-readable format, in seconds or 'annually' | 'monthly' | 'weekly' | 'daily'
  * @returns {number} time in ms
  */
 function toMilliseconds(time) {
@@ -625,14 +625,14 @@ function getDataBetween(data, startTime, endTime) {
  * 
  * @param alarm Javascript object containing information about an alarm such as its name and condition 
  */
-function createAlarm(alarm) {
+function createAlarm(alarm, lastChecked) {
     if(alarm.isSubscribedTo) {
         //pass the correct alarm to the function
-        let checkAlarmBind = checkAlarm.bind(null, alarm);
+        //let checkAlarmBind = checkAlarm.bind(null, alarm);
         //set the callback function for this alarm check
-        let newAlarm = setInterval(checkAlarmBind, toMilliseconds(alarm.checkFrequency));
+        let newAlarm = setInterval(checkAlarm, toMilliseconds(alarm.checkFrequency), alarm);
         //store this alarm in global alarms array
-        alarms.push({"name": alarm.name, "ref": newAlarm});
+        alarms.push({"name": alarm.name, "ref": newAlarm, "lastChecked": lastChecked | 0});
     }
 }
 
@@ -665,21 +665,26 @@ function checkAlarm(alarm) {
         //parse json into a Javascript object
         data = JSON.parse(data);
 
+        //get the last time this alarm was checked
+        alarmIdx = getAlarmIndex(alarms, alarm)
+        let lastChecked = alarms[alarmIdx].lastChecked;
+
         //check data against alarm condition
-        for(line in data) {
+        for(let obj of data) {
             //only check if most recent database entires violate condition
-            if(line.time > lastChecked) {
+            if(obj.time > lastChecked) {
                 //construct condition check
-                let check = line[alarm.condition.variable] + alarm.condition.condition + alarm.condition.value;
+                let check = obj[alarm.condition.variable] + alarm.condition.condition + alarm.condition.value;
                 //console.log(check);
-                if(eval(check))
+                if(eval(check)) {
                     conditionMet = true;
                     break;
+                }
             }
         }
 
         //set last checked to now (UNIX timestamp in seconds)
-        lastChecked = Math.floor(Date.now() / 1000);
+        alarms[alarmIdx].lastChecked = Math.floor(Date.now() / 1000);
 
         //if so, send email
         //if not, do nothing
@@ -690,15 +695,18 @@ function checkAlarm(alarm) {
                 content = "Condition " + alarm.condition.variable + " " +
                 alarm.condition.condition + " " + alarm.condition.value + 
                 " met. Please take action to correct the wine cellar's environment.";
-                readFile('alert-email.html')
+                readFile('html/alert-email.html')
                 .then(data => {
                     //TODO add content inside data (alarm html template)
                     content = '<html lang="en"><body>'+ content +"</body></html>"
                     sendEmail(subject, content);
-                });
+                })
+                .catch(err => console.log(err));
             } else {
                 console.log("Email alerts for " + alarm.name + " are not turned on. No email will be sent");
             }
+        } else {
+            console.log("Alarm condition not met.");
         }
     }).catch(err => {
         console.log("Encountered error while attempting to check database for alarm " + alarm.name + ".");
@@ -795,6 +803,7 @@ function createTransporter() {
 //#region *** Report generation functions ***
 
 function generateAndSendReport() {
+    console.log("Generating report.");
     //get data between now and last report send
     return new Promise(function(resolve, reject) {
         readFile(dbFilepath)
@@ -819,24 +828,35 @@ function generateAndSendReport() {
                     })
                     .catch(err => {
                         //TODO
-                        console.log("Failed to generate report.");
+                        console.log("Failed to send report.");
                         console.log(err);
                         reject(err);
                     });
                 })
                 .catch(err => {
                     //TODO
-                    console.log("Failed to generate report.");
+                    console.log("Failed to generate report. Could not read report.html.");
                     console.log(err);
                     reject(err);
                 });
             })
             .catch(err => {
-                console.log("Failed to generate report.");
-                reject(err);
+                console.log("Failed to generate report data.");
+                subject = "Wine cellar report";
+                content = "<html><body><p>No new data to generate report with.</p></body></html>";
+                sendEmail(subject, content)
+                .then(info => {
+                    resolve(info)
+                })
+                .catch(err => {
+                    //TODO
+                    console.log("Failed to send report.");
+                    console.log(err);
+                    reject(err);
+                });
             });   
         }).catch(err => {
-            console.log("Failed to generate report.");
+            console.log("Failed to generate report. Could not read database.");
             console.error(err);
             reject(err);
         });
@@ -848,6 +868,9 @@ function generateAndSendReport() {
  * @param {} data array of objects
  */
 function generateReport(data) {
+    if(!data) {
+        console.log("No new data to generate report with.");
+    }
     return new Promise(function(resolve, reject) { 
         //over n timespan
         //generate graph
