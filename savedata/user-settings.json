@@ -8,7 +8,7 @@
                 "value": 11
             },
             "isSubscribedTo": true,
-            "checkFrequency":"60"
+            "checkFrequency":"30"
         },
         {
             "name":"Temp above 20",
@@ -18,7 +18,7 @@
                 "value": 20
             },
             "isSubscribedTo": true,
-            "checkFrequency":"120"
+            "checkFrequency":"60"
         }
     ],
     "dataCollectionParams": {
