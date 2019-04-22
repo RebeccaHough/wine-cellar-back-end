@@ -30,7 +30,7 @@
     "reportParams": {
         "showTemperature":true,
         "showHumidity":true,
-        "reportGenerationFrequency":"weekly"
+        "reportGenerationFrequency":"daily"
     },
     "userEmailAddress":"amethystgreen96@gmail.com"
 }
