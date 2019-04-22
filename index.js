@@ -282,11 +282,21 @@ function validateSettings(newSettings) {
  * @param {*} newSettings 
  */
 function updateSettings(newSettings) {
-    for(obj of newSettings) {
-        //TODO properly
-        if(!obj in settings) {
-            // updateAlarm();
-            // updateReportSettings();
+    //reschedule reports if nec.
+    if(settings.reportParams != newSettings.reportParams) {
+        rescheduleReport(newSettings.reportParams);
+    }
+    //reschedule alarms if nec. in for...else
+    for(let alarmNew of newSettings.alarms) {
+        label: {
+            //find equivalent alarm
+            for(let alarm of settings) {
+                //if alarmNew already exists, do nothing
+                if(alarm == alarmNew)
+                    break label;
+            }
+            //else reschedule
+            rescheduleAlarm(alarmNew);
         }
     }
     //after all rescheduling etc. is done, save settings
@@ -626,24 +636,18 @@ function createAlarm(alarm) {
 }
 
 /**
- * Update an alarm job that is currently extant, its condition or its frequency.
- * Must call upon settings change.
+ * Reschedule an alarm check. Must call upon settings change.
  */
-function updateAlarm(alarm, propertyChanged) {
-    //VERY IMPORTANT what to do when alarm changes name
-
-    //change or setup alarm check frequency
-    if(propertyChanged == 'checkFrequency' || propertyChanged == 'isSubscribedTo' || propertyChanged == 'condition') {
-        //if alarm already exists
-        if((alarmIdx = getAlarmIndex(alarms, alarm))) {
-            //stop scheduled check
-            clearInterval(alarms[alarmIdx]);
-            //remove alarm from array
-            alarms = alarms.splice(getAlarmIndex, 1);
-        }
-        //setup new scheduled check
-        createAlarm(alarm);
+function rescheduleAlarm(alarm) {
+    //if alarm already exists
+    if((alarmIdx = getAlarmIndex(alarms, alarm))) {
+        //stop scheduled check
+        clearInterval(alarms[alarmIdx]);
+        //remove alarm from array
+        alarms = alarms.splice(getAlarmIndex, 1);
     }
+    //setup new scheduled check
+    createAlarm(alarm);
 }
 
 /**
@@ -901,17 +905,13 @@ function isAcceptableDifference(max, min, prop) {
 }
 
 /**
- * Update report settings
+ * Update report scheduling
  */
-function updateReportSettings(reportSettings, propertyChanged) {
-    if(propertyChanged == 'reportGenerationFrequency') {
-        //change report frequency
-        clearInterval(report);
-        report = setInterval(generateAndSendReport, toMilliseconds(reportSettings.reportGenerationFrequency));
-    } 
-    // else if(propertyChanged == 'reportGenerationFrequency') {
-    // }
-    //TODO parse strings to ints here?
+function rescheduleReport(reportParams) {
+    //clear currently scheduled report
+    clearInterval(report);
+    //schedule updated report
+    report = setInterval(generateAndSendReport, toMilliseconds(reportParams.reportGenerationFrequency));
 }
 
 //#endregion
