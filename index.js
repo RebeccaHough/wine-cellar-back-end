@@ -291,11 +291,15 @@ function updateSettings(newSettings) {
     //reschedule alarms if nec. in for...else
     for(let alarmNew of newSettings.alarms) {
         label: {
+            console.log(alarmNew)
             //find equivalent alarm
-            for(let alarm of settings) {
+            for(let alarm of settings.alarms) {
+                console.log(alarm)
                 //if alarmNew already exists, do nothing
-                if(alarm == alarmNew)
+                if(alarmEquals(alarm, alarmNew)) {
+                    console.log("Alarms equivalent. No need to reschedule.")
                     break label;
+                }
             }
             //else reschedule
             rescheduleAlarm(alarmNew);
@@ -303,6 +307,18 @@ function updateSettings(newSettings) {
     }
     //after all rescheduling etc. is done, save settings
     settings = newSettings;
+}
+
+function alarmEquals(alarm1, alarm2) {
+    if(
+        alarm1.name == alarm2.name &&
+        alarm1.isSubscribedTo == alarm2.isSubscribedTo &&
+        alarm1.checkFrequency == alarm2.checkFrequency &&
+        alarm1.condition.variable == alarm2.condition.variable &&
+        alarm1.condition.condition == alarm2.condition.condition &&
+        alarm1.condition.value == alarm2.condition.value
+    ) return true;
+    return false
 }
 
 //#endregion
@@ -640,6 +656,8 @@ function createAlarm(alarm, lastChecked) {
  * Reschedule an alarm check. Must call upon settings change.
  */
 function rescheduleAlarm(alarm) {
+    console.log("Rescheduling alarm " + alarm.name)
+    //TODO may not function correctly
     //if alarm already exists
     if((alarmIdx = getAlarmIndex(alarms, alarm))) {
         //stop scheduled check
